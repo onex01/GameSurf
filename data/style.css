@@ -1,143 +1,432 @@
-/* GameSurf Styles */
-.virtual-keyboard {
-    background: rgba(18, 20, 24, 0.97);
-    border-top: 2px solid #3aa76d;
-    padding: 12px;
+/* GameSurf — Console UI Theme
+ * Inspired by Xbox Series UI, PlayStation 5 Media Center, Nintendo Switch.
+ * Dark glass-morphism aesthetic with accent colours and smooth focus rings.
+ */
+
+/* ================================================================== */
+/*  Reset & base                                                        */
+/* ================================================================== */
+
+* {
+  box-sizing: border-box;
 }
 
-.keyboard-top-bar {
-    padding: 0 4px 8px;
+window,
+.gs-window {
+  background-color: #0d1117;
+  color: #e8eaed;
+  font-family: "Segoe UI Variable", "SF Pro Display", "Inter", "Noto Sans", sans-serif;
+  font-size: 15px;
 }
 
-.keyboard-caption {
-    color: #aab2bf;
-    font-size: 13px;
-    font-weight: 600;
+/* ================================================================== */
+/*  Navigation / address bar                                            */
+/* ================================================================== */
+
+.gs-navbar {
+  background: rgba(22, 27, 34, 0.95);
+  border-bottom: 1px solid rgba(255,255,255,0.06);
+  padding: 6px 12px;
+  min-height: 52px;
 }
 
-.keyboard-layout-label {
-    color: #ffffff;
-    background: #26313a;
-    border-radius: 6px;
-    padding: 4px 10px;
-    font-size: 14px;
-    font-weight: 700;
+.gs-address-bar,
+.gs-address-bar entry {
+  background: rgba(255,255,255,0.07);
+  border: 1.5px solid rgba(255,255,255,0.12);
+  border-radius: 8px;
+  color: #e8eaed;
+  font-size: 14px;
+  padding: 6px 14px;
+  min-height: 36px;
+  transition: border-color 150ms ease, background 150ms ease;
 }
 
-.keyboard-key {
-    background: #2a3038;
-    color: white;
-    border-radius: 6px;
-    font-size: 16px;
-    font-weight: bold;
-    min-width: 48px;
-    min-height: 44px;
+.gs-address-bar entry:focus,
+.gs-address-bar:focus-within {
+  background: rgba(255,255,255,0.11);
+  border-color: #0078d4;   /* Xbox blue */
+  box-shadow: 0 0 0 3px rgba(0, 120, 212, 0.25);
+  outline: none;
 }
 
-.keyboard-key:hover {
-    background: #356da8;
+/* ================================================================== */
+/*  Nav buttons (back/forward/reload)                                   */
+/* ================================================================== */
+
+.gs-nav-btn {
+  background: transparent;
+  border: none;
+  border-radius: 8px;
+  color: #9ca3af;
+  padding: 8px;
+  min-width: 36px;
+  min-height: 36px;
+  transition: background 120ms, color 120ms;
 }
 
-.keyboard-key:focus,
-.keyboard-key.focused {
-    background: #3aa76d;
-    color: #06100b;
-    outline: 3px solid white;
-    outline-offset: 1px;
+.gs-nav-btn:hover,
+.gs-nav-btn:focus {
+  background: rgba(255,255,255,0.1);
+  color: #ffffff;
 }
 
-.keyboard-special {
-    background: #2a2a2a;
-    color: #aaa;
-    border-radius: 4px;
-    font-size: 12px;
+.gs-nav-btn:active {
+  background: rgba(255,255,255,0.18);
 }
 
-.keyboard-special:hover {
-    background: #3a3a3a;
+/* ================================================================== */
+/*  Home screen                                                         */
+/* ================================================================== */
+
+.gs-homescreen {
+  background: linear-gradient(160deg, #0f1923 0%, #0d1117 60%, #1a0a2e 100%);
 }
 
-.header-bar {
-    background: linear-gradient(180deg, #18212b, #10141a);
-    padding: 10px 12px;
-    border-bottom: 1px solid #3aa76d;
+/* Search row */
+.gs-search-row {
+  background: rgba(255,255,255,0.04);
+  border-radius: 14px;
+  padding: 8px 16px;
+  border: 1.5px solid rgba(255,255,255,0.08);
 }
 
-.header-bar button {
-    min-width: 46px;
-    min-height: 42px;
-    border-radius: 8px;
-    background: #26313c;
-    color: #eef3f8;
-    border: 1px solid #394757;
+.gs-search-entry,
+.gs-search-entry entry {
+  background: transparent;
+  border: none;
+  color: #ffffff;
+  font-size: 18px;
+  min-height: 44px;
 }
 
-.header-bar entry {
-    min-height: 42px;
-    border-radius: 8px;
-    background: #080b10;
-    color: #ffffff;
-    border: 1px solid #3aa76d;
-    padding: 0 14px;
-    font-size: 15px;
+.gs-search-entry:focus,
+.gs-search-entry entry:focus {
+  border: none;
+  box-shadow: none;
 }
 
-.control-hints {
-    background: #10151b;
-    color: #d6dee6;
-    border-bottom: 1px solid #2a3440;
-    padding: 8px 12px;
-    font-size: 13px;
-    font-weight: 600;
+.gs-search-row:focus-within {
+  border-color: #0078d4;
+  box-shadow: 0 0 0 3px rgba(0, 120, 212, 0.30),
+              0 8px 32px rgba(0,0,0,0.4);
 }
 
-.virtual-cursor {
-    min-width: 18px;
-    min-height: 18px;
-    background: #3aa76d;
-    border: 3px solid #ffffff;
-    border-radius: 999px;
-    box-shadow: 0 0 0 2px rgba(0, 0, 0, 0.65), 0 0 14px rgba(58, 167, 109, 0.75);
+/* Section labels */
+.gs-section-label {
+  font-size: 12px;
+  font-weight: 600;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  color: #6b7280;
+  margin-bottom: 8px;
 }
 
-/* Индикатор режима курсора */
-.cursor-mode-indicator {
-    background: #4a90d9;
-    color: white;
-    border-radius: 12px;
-    padding: 2px 8px;
-    font-size: 11px;
+/* ================================================================== */
+/*  Tiles (pinned + recent)                                             */
+/* ================================================================== */
+
+.gs-tile {
+  background: rgba(255,255,255,0.055);
+  border: 1.5px solid rgba(255,255,255,0.09);
+  border-radius: 12px;
+  padding: 14px 10px;
+  min-width: 110px;
+  min-height: 100px;
+  color: #d1d5db;
+  transition: background 150ms, border-color 150ms, transform 150ms,
+              box-shadow 150ms;
 }
 
-.settings-panel {
-    background: #171a20;
-    color: #ffffff;
-    padding: 18px;
+.gs-tile:hover {
+  background: rgba(255,255,255,0.10);
+  border-color: rgba(255,255,255,0.18);
 }
 
-.settings-title {
-    font-size: 20px;
-    font-weight: 700;
+/* Gamepad focus ring — matches Xbox/PS style */
+.gs-tile:focus {
+  background: rgba(0, 120, 212, 0.18);
+  border-color: #0078d4;
+  box-shadow: 0 0 0 3px rgba(0, 120, 212, 0.40),
+              0 4px 20px rgba(0,0,0,0.5);
+  transform: scale(1.04);
+  outline: none;
+  color: #ffffff;
 }
 
-.settings-group {
-    background: #202630;
-    border-radius: 8px;
-    padding: 12px;
+.gs-tile:active {
+  transform: scale(0.97);
+  background: rgba(0, 120, 212, 0.30);
 }
 
-.settings-check {
-    font-size: 16px;
-    min-height: 36px;
+/* Pinned tiles get a subtle accent */
+.gs-tile-pinned {
+  border-color: rgba(0, 120, 212, 0.30);
 }
 
-.settings-focused {
-    outline: 3px solid #3aa76d;
-    outline-offset: 3px;
-    border-radius: 6px;
+.gs-tile-pinned:focus {
+  border-color: #00b4ff;
+  box-shadow: 0 0 0 3px rgba(0, 180, 255, 0.40),
+              0 4px 20px rgba(0,0,0,0.5);
 }
 
-.settings-hint {
-    color: #aab2bf;
-    font-size: 13px;
+/* ================================================================== */
+/*  Recent grid                                                         */
+/* ================================================================== */
+
+.gs-recent-grid {
+  background: transparent;
+}
+
+.gs-recent-grid > flowboxchild {
+  padding: 4px;
+  border-radius: 12px;
+}
+
+.gs-recent-grid > flowboxchild:focus {
+  outline: none;
+}
+
+.gs-recent-grid > flowboxchild:selected {
+  background: transparent;
+}
+
+/* ================================================================== */
+/*  Virtual keyboard                                                     */
+/* ================================================================== */
+
+.gs-keyboard {
+  background: rgba(18, 22, 30, 0.97);
+  border-top: 1px solid rgba(255,255,255,0.08);
+  border-radius: 16px 16px 0 0;
+  padding: 12px 8px 16px;
+}
+
+.gs-keyboard-key {
+  background: rgba(255,255,255,0.09);
+  border: 1px solid rgba(255,255,255,0.12);
+  border-radius: 8px;
+  color: #e8eaed;
+  font-size: 16px;
+  min-width: 44px;
+  min-height: 44px;
+  padding: 0;
+  transition: background 100ms, border-color 100ms, transform 100ms;
+}
+
+.gs-keyboard-key:focus {
+  background: rgba(0, 120, 212, 0.35);
+  border-color: #0078d4;
+  box-shadow: 0 0 0 2px rgba(0, 120, 212, 0.50);
+  transform: scale(1.10);
+  outline: none;
+  color: #ffffff;
+}
+
+.gs-keyboard-key:active {
+  transform: scale(0.93);
+  background: rgba(0, 120, 212, 0.55);
+}
+
+.gs-keyboard-key.wide {
+  min-width: 88px;
+}
+
+.gs-keyboard-key.space {
+  min-width: 220px;
+}
+
+/* ================================================================== */
+/*  Gamepad hint overlay (shown when controller is active)              */
+/* ================================================================== */
+
+.gs-hint-bar {
+  background: rgba(0,0,0,0.7);
+  border-radius: 10px;
+  padding: 6px 16px;
+  color: rgba(255,255,255,0.75);
+  font-size: 12px;
+}
+
+.gs-hint-btn {
+  background: rgba(255,255,255,0.15);
+  border-radius: 6px;
+  padding: 2px 7px;
+  font-weight: 600;
+  font-size: 11px;
+  color: #ffffff;
+  margin: 0 3px;
+}
+
+/* Xbox A = green, B = red, X = blue, Y = yellow */
+.gs-btn-a { background: #107c10; }
+.gs-btn-b { background: #e81123; }
+.gs-btn-x { background: #0078d4; }
+.gs-btn-y { background: #f7a600; color: #000; }
+
+/* PlayStation variant */
+.gs-btn-cross    { background: #1976d2; }
+.gs-btn-circle   { background: #c62828; }
+.gs-btn-square   { background: #880e4f; }
+.gs-btn-triangle { background: #2e7d32; }
+
+/* ================================================================== */
+/*  Media player overlay                                                 */
+/* ================================================================== */
+
+.gs-media-bar {
+  background: rgba(0,0,0,0.80);
+  border-radius: 14px;
+  padding: 10px 20px;
+  margin: 12px;
+}
+
+.gs-media-btn {
+  background: rgba(255,255,255,0.12);
+  border: none;
+  border-radius: 50%;
+  color: #ffffff;
+  min-width: 48px;
+  min-height: 48px;
+  padding: 0;
+  transition: background 120ms, transform 100ms;
+}
+
+.gs-media-btn:focus {
+  background: rgba(0, 120, 212, 0.45);
+  box-shadow: 0 0 0 3px rgba(0, 120, 212, 0.50);
+  transform: scale(1.12);
+  outline: none;
+}
+
+.gs-media-btn.play-pause {
+  min-width: 64px;
+  min-height: 64px;
+  background: #0078d4;
+}
+
+.gs-media-btn.play-pause:focus {
+  background: #106ebe;
+}
+
+/* Progress / seek bar */
+.gs-seek-bar trough {
+  background: rgba(255,255,255,0.20);
+  border-radius: 4px;
+  min-height: 6px;
+}
+
+.gs-seek-bar highlight {
+  background: #0078d4;
+  border-radius: 4px;
+}
+
+.gs-seek-bar slider {
+  background: #ffffff;
+  border-radius: 50%;
+  min-width: 16px;
+  min-height: 16px;
+  border: none;
+}
+
+/* ================================================================== */
+/*  Settings page                                                       */
+/* ================================================================== */
+
+.gs-settings-page {
+  background: rgba(255,255,255,0.025);
+  border-radius: 16px;
+  padding: 24px;
+  margin: 20px;
+}
+
+.gs-settings-group {
+  background: rgba(255,255,255,0.045);
+  border-radius: 12px;
+  border: 1px solid rgba(255,255,255,0.07);
+  padding: 4px 0;
+  margin-bottom: 16px;
+}
+
+.gs-settings-row {
+  padding: 12px 18px;
+  border-bottom: 1px solid rgba(255,255,255,0.05);
+}
+
+.gs-settings-row:last-child {
+  border-bottom: none;
+}
+
+.gs-settings-row:focus-within,
+.gs-settings-row.focused {
+  background: rgba(0, 120, 212, 0.12);
+}
+
+/* ================================================================== */
+/*  Scrollbars (slim, console-style)                                    */
+/* ================================================================== */
+
+scrollbar {
+  background: transparent;
+  min-width: 6px;
+  min-height: 6px;
+}
+
+scrollbar slider {
+  background: rgba(255,255,255,0.20);
+  border-radius: 3px;
+  min-width: 6px;
+  min-height: 40px;
+  margin: 2px;
+  transition: background 150ms;
+}
+
+scrollbar slider:hover {
+  background: rgba(255,255,255,0.35);
+}
+
+/* ================================================================== */
+/*  Cursor (software gamepad cursor)                                    */
+/* ================================================================== */
+
+.gs-cursor {
+  background: rgba(255,255,255,0.90);
+  border-radius: 50%;
+  min-width: 16px;
+  min-height: 16px;
+  box-shadow: 0 0 0 2px rgba(0,120,212,0.7),
+              0 2px 8px rgba(0,0,0,0.6);
+}
+
+/* ================================================================== */
+/*  Focus ring for all focusable elements (gamepad-first)               */
+/* ================================================================== */
+
+button:focus,
+entry:focus,
+.gs-tile:focus,
+.gs-keyboard-key:focus,
+.gs-media-btn:focus,
+.gs-nav-btn:focus {
+  outline: none;
+}
+
+/* Generic fallback ring for un-styled widgets */
+*:focus-visible {
+  outline: 2px solid #0078d4;
+  outline-offset: 2px;
+}
+
+/* ================================================================== */
+/*  Toast / notification                                                */
+/* ================================================================== */
+
+.gs-toast {
+  background: rgba(30,34,42,0.95);
+  border: 1px solid rgba(255,255,255,0.10);
+  border-radius: 10px;
+  color: #e8eaed;
+  padding: 10px 20px;
+  font-size: 14px;
+  box-shadow: 0 4px 24px rgba(0,0,0,0.5);
 }

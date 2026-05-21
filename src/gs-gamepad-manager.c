@@ -1,199 +1,280 @@
-/* gs-gamepad-manager.c */
+/* gs-gamepad-manager.c — GameSurf Gamepad Manager */
 #include "gs-gamepad-manager.h"
-#include <glib/gi18n.h>
-#include <string.h>
+#include <SDL2/SDL.h>
+#include <glib.h>
+
+/* ------------------------------------------------------------------ */
+/*  Types                                                               */
+/* ------------------------------------------------------------------ */
+
+typedef struct {
+    SDL_GameController *controller;
+    SDL_JoystickID      instance_id;
+    int                 device_index;   /* original index at open time */
+    char               *name;
+} GsGamepadEntry;
 
 struct _GsGamepadManager {
-    GObject parent_instance;
-    SDL_GameController *controller;
-    GsGamepadConfig config;
-    guint poll_source_id;
-    gboolean running;
-    Uint8 last_buttons[SDL_CONTROLLER_BUTTON_MAX];
-    
-    // Callbacks
-    void (*btn_callback)(SDL_GameControllerButton, gpointer);
-    gpointer btn_data;
-    void (*axis_callback)(float, float, gpointer);
-    gpointer axis_data;
-    void (*extended_axis_callback)(float, float, float, float, float, float, gpointer);
-    gpointer extended_axis_data;
+    GObject              parent_instance;
+
+    GHashTable          *gamepads;      /* instance_id → GsGamepadEntry* */
+    guint                poll_source;   /* g_timeout_add id */
+    guint                watchdog_src;  /* reconnect watchdog id */
+
+    /* Current state */
+    float                axis[SDL_CONTROLLER_AXIS_MAX];
+    gboolean             button[SDL_CONTROLLER_BUTTON_MAX];
+
+    /* Callbacks */
+    GsGamepadButtonCb    button_cb;
+    GsGamepadAxisCb      axis_cb;
+    gpointer             user_data;
 };
 
-G_DEFINE_TYPE(GsGamepadManager, gs_gamepad_manager, G_TYPE_OBJECT)
+G_DEFINE_TYPE (GsGamepadManager, gs_gamepad_manager, G_TYPE_OBJECT)
 
-#define DEFAULT_SENSITIVITY 1.5f
-#define DEFAULT_DEADZONE 0.15f
-#define POLL_INTERVAL_MS 8  // ~120Hz для плавности
+/* ------------------------------------------------------------------ */
+/*  Helpers                                                             */
+/* ------------------------------------------------------------------ */
 
-static float normalize_stick_axis(Sint16 value, float deadzone) {
-    float axis = value / 32767.0f;
-    if (fabs(axis) < deadzone) {
-        return 0.0f;
-    }
-    return (axis > 0 ? 1.0f : -1.0f) * (fabs(axis) - deadzone) / (1.0f - deadzone);
+static void
+gamepad_entry_free (GsGamepadEntry *e)
+{
+    if (e->controller)
+        SDL_GameControllerClose (e->controller);
+    g_free (e->name);
+    g_free (e);
 }
 
-static float normalize_trigger_axis(Sint16 value) {
-    float axis = value / 32767.0f;
-    return axis < 0.08f ? 0.0f : axis;
+static void
+open_all_gamepads (GsGamepadManager *self)
+{
+    int n = SDL_NumJoysticks ();
+    for (int i = 0; i < n; i++) {
+        if (!SDL_IsGameController (i)) continue;
+
+        SDL_GameController *gc = SDL_GameControllerOpen (i);
+        if (!gc) {
+            g_warning ("GameSurf: failed to open controller %d: %s",
+                       i, SDL_GetError ());
+            continue;
+        }
+
+        SDL_JoystickID iid =
+            SDL_JoystickInstanceID (SDL_GameControllerGetJoystick (gc));
+
+        /* Skip if already tracked */
+        if (g_hash_table_contains (self->gamepads,
+                                    GINT_TO_POINTER ((int)iid))) {
+            SDL_GameControllerClose (gc);
+            continue;
+        }
+
+        GsGamepadEntry *e = g_new0 (GsGamepadEntry, 1);
+        e->controller   = gc;
+        e->instance_id  = iid;
+        e->device_index = i;
+        e->name         = g_strdup (SDL_GameControllerName (gc));
+
+        g_hash_table_insert (self->gamepads,
+                             GINT_TO_POINTER ((int)iid), e);
+
+        g_message ("GameSurf: gamepad connected — %s (id=%d)", e->name, iid);
+    }
 }
 
-static gboolean gs_gamepad_manager_poll(gpointer user_data) {
-    GsGamepadManager *self = GS_GAMEPAD_MANAGER(user_data);
+/* ------------------------------------------------------------------ */
+/*  SDL event poll — called every 8 ms (~120 Hz)                        */
+/* ------------------------------------------------------------------ */
 
-    SDL_GameControllerUpdate();
+static gboolean
+poll_gamepad_events (gpointer user_data)
+{
+    GsGamepadManager *self = GS_GAMEPAD_MANAGER (user_data);
+    SDL_Event ev;
 
-    SDL_Event event;
-    while (SDL_PollEvent(&event)) {
-        switch (event.type) {
-            case SDL_CONTROLLERDEVICEADDED:
-                if (!self->controller) {
-                    self->controller = SDL_GameControllerOpen(event.cdevice.which);
-                    g_message(_("Gamepad connected: %s"), 
-                        SDL_GameControllerName(self->controller));
-                    
-                    // Виброотклик при подключении
-                    if (self->config.haptic_feedback && SDL_GameControllerHasRumble(self->controller)) {
-                        SDL_GameControllerRumble(self->controller, 0x4000, 0x4000, 200);
-                    }
-                }
-                break;
+    while (SDL_PollEvent (&ev)) {
 
-            case SDL_CONTROLLERDEVICEREMOVED:
-                if (self->controller && event.cdevice.which == 
-                    SDL_JoystickInstanceID(SDL_GameControllerGetJoystick(self->controller))) {
-                    g_message(_("Gamepad disconnected"));
-                    SDL_GameControllerClose(self->controller);
-                    self->controller = NULL;
-                }
-                break;
+        switch (ev.type) {
 
-            case SDL_CONTROLLERAXISMOTION:
-                break;
-        }
-    }
+        /* ---- Hot-plug ---- */
+        case SDL_CONTROLLERDEVICEADDED:
+            g_message ("GameSurf: controller added (index %d)", ev.cdevice.which);
+            open_all_gamepads (self);
+            break;
 
-    if (self->controller && (self->axis_callback || self->extended_axis_callback)) {
-        float deadzone = self->config.deadzone;
-        float lx = normalize_stick_axis(SDL_GameControllerGetAxis(self->controller, SDL_CONTROLLER_AXIS_LEFTX), deadzone);
-        float ly = normalize_stick_axis(SDL_GameControllerGetAxis(self->controller, SDL_CONTROLLER_AXIS_LEFTY), deadzone);
-        float rx = normalize_stick_axis(SDL_GameControllerGetAxis(self->controller, SDL_CONTROLLER_AXIS_RIGHTX), deadzone);
-        float ry = normalize_stick_axis(SDL_GameControllerGetAxis(self->controller, SDL_CONTROLLER_AXIS_RIGHTY), deadzone);
-        float lt = normalize_trigger_axis(SDL_GameControllerGetAxis(self->controller, SDL_CONTROLLER_AXIS_TRIGGERLEFT));
-        float rt = normalize_trigger_axis(SDL_GameControllerGetAxis(self->controller, SDL_CONTROLLER_AXIS_TRIGGERRIGHT));
-
-        if (self->config.invert_y) {
-            ly = -ly;
-            ry = -ry;
-        }
-
-        float speed_mult = 1.0f;
-        switch (self->config.speed_mode) {
-            case GS_CURSOR_SPEED_SLOW: speed_mult = 0.5f; break;
-            case GS_CURSOR_SPEED_NORMAL: speed_mult = 1.0f; break;
-            case GS_CURSOR_SPEED_FAST: speed_mult = 2.5f; break;
-        }
-
-        lx *= self->config.sensitivity * speed_mult;
-        ly *= self->config.sensitivity * speed_mult;
-        rx *= self->config.sensitivity;
-        ry *= self->config.sensitivity;
-
-        if (self->axis_callback) {
-            self->axis_callback(lx, ly, self->axis_data);
-        }
-        if (self->extended_axis_callback) {
-            self->extended_axis_callback(lx, ly, rx, ry, lt, rt, self->extended_axis_data);
-        }
-    }
-
-    if (self->btn_callback && self->controller) {
-        for (int button = 0; button < SDL_CONTROLLER_BUTTON_MAX; button++) {
-            Uint8 pressed = SDL_GameControllerGetButton(self->controller, button);
-            if (pressed && !self->last_buttons[button]) {
-                self->btn_callback((SDL_GameControllerButton)button, self->btn_data);
+        case SDL_CONTROLLERDEVICEREMOVED: {
+            SDL_JoystickID iid = (SDL_JoystickID) ev.cdevice.which;
+            GsGamepadEntry *e  =
+                g_hash_table_lookup (self->gamepads, GINT_TO_POINTER ((int)iid));
+            if (e) {
+                g_message ("GameSurf: gamepad disconnected — %s", e->name);
+                g_hash_table_remove (self->gamepads, GINT_TO_POINTER ((int)iid));
             }
-            self->last_buttons[button] = pressed;
+            break;
+        }
+
+        /* ---- Buttons ---- */
+        case SDL_CONTROLLERBUTTONDOWN:
+        case SDL_CONTROLLERBUTTONUP: {
+            gboolean pressed = (ev.type == SDL_CONTROLLERBUTTONDOWN);
+            int btn = ev.cbutton.button;
+            if (btn >= 0 && btn < SDL_CONTROLLER_BUTTON_MAX)
+                self->button[btn] = pressed;
+            if (self->button_cb)
+                self->button_cb (self, btn, pressed, self->user_data);
+            break;
+        }
+
+        /* ---- Axes ---- */
+        case SDL_CONTROLLERAXISMOTION: {
+            int axis = ev.caxis.axis;
+            if (axis >= 0 && axis < SDL_CONTROLLER_AXIS_MAX) {
+                float val = ev.caxis.value / 32767.0f;
+                /* Apply dead-zone of 0.15 */
+                if (val > -0.15f && val < 0.15f) val = 0.0f;
+                self->axis[axis] = val;
+                if (self->axis_cb)
+                    self->axis_cb (self, axis, val, self->user_data);
+            }
+            break;
+        }
+
+        default:
+            break;
         }
     }
 
     return G_SOURCE_CONTINUE;
 }
 
-static void gs_gamepad_manager_class_init(GsGamepadManagerClass *class) {
-    // Пусто - нет свойств GObject
+/* ------------------------------------------------------------------ */
+/*  Watchdog — scans for newly-connected BT gamepads every 3 seconds   */
+/* ------------------------------------------------------------------ */
+
+static gboolean
+reconnect_watchdog (gpointer user_data)
+{
+    GsGamepadManager *self = GS_GAMEPAD_MANAGER (user_data);
+
+    /* Pump SDL's device-detection without blocking */
+    SDL_PumpEvents ();
+    open_all_gamepads (self);
+
+    return G_SOURCE_CONTINUE;
 }
 
-static void gs_gamepad_manager_init(GsGamepadManager *self) {
-    self->config.sensitivity = DEFAULT_SENSITIVITY;
-    self->config.deadzone = DEFAULT_DEADZONE;
-    self->config.speed_mode = GS_CURSOR_SPEED_NORMAL;
-    self->config.invert_y = FALSE;
-    self->config.haptic_feedback = TRUE;
-    self->controller = NULL;
-    self->running = FALSE;
-    memset(self->last_buttons, 0, sizeof(self->last_buttons));
+/* ------------------------------------------------------------------ */
+/*  GObject lifecycle                                                   */
+/* ------------------------------------------------------------------ */
+
+static void
+gs_gamepad_manager_finalize (GObject *object)
+{
+    GsGamepadManager *self = GS_GAMEPAD_MANAGER (object);
+
+    if (self->poll_source)    g_source_remove (self->poll_source);
+    if (self->watchdog_src)   g_source_remove (self->watchdog_src);
+
+    g_hash_table_destroy (self->gamepads);
+
+    SDL_QuitSubSystem (SDL_INIT_GAMECONTROLLER | SDL_INIT_JOYSTICK);
+
+    G_OBJECT_CLASS (gs_gamepad_manager_parent_class)->finalize (object);
 }
 
-GsGamepadManager *gs_gamepad_manager_new(void) {
-    return g_object_new(GS_TYPE_GAMEPAD_MANAGER, NULL);
+static void
+gs_gamepad_manager_class_init (GsGamepadManagerClass *klass)
+{
+    GObjectClass *object_class = G_OBJECT_CLASS (klass);
+    object_class->finalize = gs_gamepad_manager_finalize;
 }
 
-void gs_gamepad_manager_set_config(GsGamepadManager *self, const GsGamepadConfig *config) {
-    g_return_if_fail(GS_IS_GAMEPAD_MANAGER(self));
-    self->config = *config;
-}
+static void
+gs_gamepad_manager_init (GsGamepadManager *self)
+{
+    /* ---- SDL hints BEFORE init ---- */
 
-void gs_gamepad_manager_start(GsGamepadManager *self) {
-    g_return_if_fail(GS_IS_GAMEPAD_MANAGER(self));
-    if (self->running) return;
-    
-    self->running = TRUE;
-    SDL_GameControllerEventState(SDL_ENABLE);
-    self->poll_source_id = g_timeout_add(POLL_INTERVAL_MS, gs_gamepad_manager_poll, self);
-    
-    // Проверяем уже подключенные геймпады
-    for (int i = 0; i < SDL_NumJoysticks(); i++) {
-        if (SDL_IsGameController(i)) {
-            self->controller = SDL_GameControllerOpen(i);
-            memset(self->last_buttons, 0, sizeof(self->last_buttons));
-            break;
-        }
+    /* Allow BT controllers to keep sending events in the background */
+    SDL_SetHint (SDL_HINT_JOYSTICK_ALLOW_BACKGROUND_EVENTS, "1");
+
+    /* Enable HIDAPI Bluetooth for PS4/PS5/Switch Pro */
+    SDL_SetHint (SDL_HINT_JOYSTICK_HIDAPI_BLUETOOTH, "1");
+    SDL_SetHint ("SDL_JOYSTICK_HIDAPI_PS4_RUMBLE",   "1");
+    SDL_SetHint ("SDL_JOYSTICK_HIDAPI_PS5_RUMBLE",   "1");
+    SDL_SetHint ("SDL_GAMECONTROLLER_USE_BUTTON_LABELS", "0"); /* ABXY always Xbox-style */
+
+    /* Init subsystems */
+    if (SDL_InitSubSystem (SDL_INIT_GAMECONTROLLER | SDL_INIT_JOYSTICK) < 0) {
+        g_warning ("GameSurf: SDL_InitSubSystem failed: %s", SDL_GetError ());
+        return;
     }
+
+    SDL_GameControllerEventState (SDL_ENABLE);
+
+    /* Hash-table: instance_id (int) → GsGamepadEntry* */
+    self->gamepads = g_hash_table_new_full (
+        g_direct_hash, g_direct_equal,
+        NULL, (GDestroyNotify) gamepad_entry_free);
+
+    /* Open whatever is already connected */
+    open_all_gamepads (self);
+
+    /* Poll SDL events every 8 ms */
+    self->poll_source = g_timeout_add (8, poll_gamepad_events, self);
+
+    /* BT reconnect watchdog every 3 s */
+    self->watchdog_src = g_timeout_add_seconds (3, reconnect_watchdog, self);
 }
 
-void gs_gamepad_manager_stop(GsGamepadManager *self) {
-    g_return_if_fail(GS_IS_GAMEPAD_MANAGER(self));
-    if (!self->running) return;
-    
-    if (self->poll_source_id) {
-        g_source_remove(self->poll_source_id);
-        self->poll_source_id = 0;
-    }
-    
-    if (self->controller) {
-        SDL_GameControllerClose(self->controller);
-        self->controller = NULL;
-    }
-    
-    self->running = FALSE;
+/* ------------------------------------------------------------------ */
+/*  Public API                                                          */
+/* ------------------------------------------------------------------ */
+
+GsGamepadManager *
+gs_gamepad_manager_new (void)
+{
+    return g_object_new (GS_TYPE_GAMEPAD_MANAGER, NULL);
 }
 
-void gs_gamepad_manager_connect_button_press(GsGamepadManager *self,
-    void (*callback)(SDL_GameControllerButton, gpointer), gpointer data) {
-    self->btn_callback = callback;
-    self->btn_data = data;
+void
+gs_gamepad_manager_set_callbacks (GsGamepadManager  *self,
+                                  GsGamepadButtonCb  button_cb,
+                                  GsGamepadAxisCb    axis_cb,
+                                  gpointer           user_data)
+{
+    g_return_if_fail (GS_IS_GAMEPAD_MANAGER (self));
+    self->button_cb = button_cb;
+    self->axis_cb   = axis_cb;
+    self->user_data = user_data;
 }
 
-void gs_gamepad_manager_connect_axis_motion(GsGamepadManager *self,
-    void (*callback)(float, float, gpointer), gpointer data) {
-    self->axis_callback = callback;
-    self->axis_data = data;
+gboolean
+gs_gamepad_manager_has_gamepad (GsGamepadManager *self)
+{
+    g_return_val_if_fail (GS_IS_GAMEPAD_MANAGER (self), FALSE);
+    return g_hash_table_size (self->gamepads) > 0;
 }
 
-void gs_gamepad_manager_connect_extended_axis_motion(GsGamepadManager *self,
-    void (*callback)(float, float, float, float, float, float, gpointer), gpointer data) {
-    self->extended_axis_callback = callback;
-    self->extended_axis_data = data;
+float
+gs_gamepad_manager_get_axis (GsGamepadManager *self, int axis)
+{
+    g_return_val_if_fail (GS_IS_GAMEPAD_MANAGER (self), 0.0f);
+    if (axis < 0 || axis >= SDL_CONTROLLER_AXIS_MAX) return 0.0f;
+    return self->axis[axis];
+}
+
+gboolean
+gs_gamepad_manager_get_button (GsGamepadManager *self, int button)
+{
+    g_return_val_if_fail (GS_IS_GAMEPAD_MANAGER (self), FALSE);
+    if (button < 0 || button >= SDL_CONTROLLER_BUTTON_MAX) return FALSE;
+    return self->button[button];
+}
+
+int
+gs_gamepad_manager_count (GsGamepadManager *self)
+{
+    g_return_val_if_fail (GS_IS_GAMEPAD_MANAGER (self), 0);
+    return (int) g_hash_table_size (self->gamepads);
 }
