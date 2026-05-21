@@ -1,27 +1,49 @@
 /* GameSurf Styles */
 .virtual-keyboard {
-    background: rgba(30, 30, 30, 0.95);
-    border-top: 2px solid #4a90d9;
-    padding: 8px;
+    background: rgba(18, 20, 24, 0.97);
+    border-top: 2px solid #3aa76d;
+    padding: 12px;
+}
+
+.keyboard-top-bar {
+    padding: 0 4px 8px;
+}
+
+.keyboard-caption {
+    color: #aab2bf;
+    font-size: 13px;
+    font-weight: 600;
+}
+
+.keyboard-layout-label {
+    color: #ffffff;
+    background: #26313a;
+    border-radius: 6px;
+    padding: 4px 10px;
+    font-size: 14px;
+    font-weight: 700;
 }
 
 .keyboard-key {
-    background: #3a3a3a;
+    background: #2a3038;
     color: white;
-    border-radius: 4px;
-    font-size: 14px;
+    border-radius: 6px;
+    font-size: 16px;
     font-weight: bold;
-    min-width: 32px;
-    min-height: 32px;
+    min-width: 48px;
+    min-height: 44px;
 }
 
 .keyboard-key:hover {
-    background: #4a90d9;
+    background: #356da8;
 }
 
-.keyboard-key:focus {
-    background: #5aa0e9;
-    outline: 2px solid white;
+.keyboard-key:focus,
+.keyboard-key.focused {
+    background: #3aa76d;
+    color: #06100b;
+    outline: 3px solid white;
+    outline-offset: 1px;
 }
 
 .keyboard-special {
@@ -36,9 +58,35 @@
 }
 
 .header-bar {
-    background: #1e1e1e;
-    padding: 4px 8px;
-    border-bottom: 1px solid #333;
+    background: #14171c;
+    padding: 8px;
+    border-bottom: 1px solid #303844;
+}
+
+.header-bar button {
+    min-width: 42px;
+    min-height: 38px;
+    border-radius: 6px;
+    background: #242b35;
+    color: #eef3f8;
+}
+
+.header-bar entry {
+    min-height: 38px;
+    border-radius: 6px;
+    background: #0f1217;
+    color: #ffffff;
+    border: 1px solid #3a4654;
+    padding: 0 12px;
+}
+
+.control-hints {
+    background: #0f1217;
+    color: #b9c4cf;
+    border-bottom: 1px solid #242c36;
+    padding: 6px 10px;
+    font-size: 13px;
+    font-weight: 600;
 }
 
 /* Индикатор режима курсора */
@@ -48,4 +96,31 @@
     border-radius: 12px;
     padding: 2px 8px;
     font-size: 11px;
+}
+
+.settings-panel {
+    background: #171a20;
+    color: #ffffff;
+    padding: 18px;
+}
+
+.settings-title {
+    font-size: 20px;
+    font-weight: 700;
+}
+
+.settings-group {
+    background: #202630;
+    border-radius: 8px;
+    padding: 12px;
+}
+
+.settings-check {
+    font-size: 16px;
+    min-height: 36px;
+}
+
+.settings-hint {
+    color: #aab2bf;
+    font-size: 13px;
 }

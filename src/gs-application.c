@@ -22,7 +22,21 @@ static void gs_application_startup(GApplication *app) {
 
     // CSS стили
     GtkCssProvider *provider = gtk_css_provider_new();
-    gtk_css_provider_load_from_path(provider, "/usr/share/gamesurf/style.css");
+    const char *data_dir = g_getenv("GAMESURF_DATA_DIR");
+    g_autofree char *env_css_path = data_dir ? g_build_filename(data_dir, "style.css", NULL) : NULL;
+    const char *css_path = NULL;
+
+    if (env_css_path && g_file_test(env_css_path, G_FILE_TEST_EXISTS)) {
+        css_path = env_css_path;
+    } else if (g_file_test("/usr/local/share/gamesurf/style.css", G_FILE_TEST_EXISTS)) {
+        css_path = "/usr/local/share/gamesurf/style.css";
+    } else if (g_file_test("/usr/share/gamesurf/style.css", G_FILE_TEST_EXISTS)) {
+        css_path = "/usr/share/gamesurf/style.css";
+    }
+
+    if (css_path) {
+        gtk_css_provider_load_from_path(provider, css_path);
+    }
     gtk_style_context_add_provider_for_display(gdk_display_get_default(),
         GTK_STYLE_PROVIDER(provider), GTK_STYLE_PROVIDER_PRIORITY_APPLICATION);
     g_object_unref(provider);

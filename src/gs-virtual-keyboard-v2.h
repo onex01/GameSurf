@@ -15,6 +15,9 @@ GsVirtualKeyboardV2 *gs_virtual_keyboard_v2_new(void);
 void gs_virtual_keyboard_v2_set_layout(GsVirtualKeyboardV2 *self, const char *lang_code);
 char **gs_virtual_keyboard_v2_list_layouts(GsVirtualKeyboardV2 *self, gint *count);
 const char *gs_virtual_keyboard_v2_get_current_layout(GsVirtualKeyboardV2 *self);
+const char *gs_virtual_keyboard_v2_get_current_layout_name(GsVirtualKeyboardV2 *self);
+const char *gs_virtual_keyboard_v2_get_layout_name(const char *lang_code);
+void gs_virtual_keyboard_v2_set_enabled_layouts(GsVirtualKeyboardV2 *self, const char * const *lang_codes);
 
 /* Input target */
 void gs_virtual_keyboard_v2_set_target(GsVirtualKeyboardV2 *self, GtkWidget *target);

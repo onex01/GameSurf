@@ -27,6 +27,12 @@
       <summary>Virtual keyboard layout</summary>
       <description>Keyboard layout code or auto to use system locale</description>
     </key>
+
+    <key name="keyboard-enabled-layouts" type="as">
+      <default>['en', 'ru']</default>
+      <summary>Enabled virtual keyboard layouts</summary>
+      <description>Language layouts available when switching the virtual keyboard</description>
+    </key>
     
     <key name="invert-y-axis" type="b">
       <default>false</default>

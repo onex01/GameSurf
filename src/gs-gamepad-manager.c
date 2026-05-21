@@ -1,6 +1,7 @@
 /* gs-gamepad-manager.c */
 #include "gs-gamepad-manager.h"
 #include <glib/gi18n.h>
+#include <string.h>
 
 struct _GsGamepadManager {
     GObject parent_instance;
@@ -8,6 +9,7 @@ struct _GsGamepadManager {
     GsGamepadConfig config;
     guint poll_source_id;
     gboolean running;
+    Uint8 last_buttons[SDL_CONTROLLER_BUTTON_MAX];
     
     // Callbacks
     void (*btn_callback)(SDL_GameControllerButton, gpointer);
@@ -24,7 +26,9 @@ G_DEFINE_TYPE(GsGamepadManager, gs_gamepad_manager, G_TYPE_OBJECT)
 
 static gboolean gs_gamepad_manager_poll(gpointer user_data) {
     GsGamepadManager *self = GS_GAMEPAD_MANAGER(user_data);
-    
+
+    SDL_GameControllerUpdate();
+
     SDL_Event event;
     while (SDL_PollEvent(&event)) {
         switch (event.type) {
@@ -47,14 +51,6 @@ static gboolean gs_gamepad_manager_poll(gpointer user_data) {
                     g_message(_("Gamepad disconnected"));
                     SDL_GameControllerClose(self->controller);
                     self->controller = NULL;
-                }
-                break;
-
-            case SDL_CONTROLLERBUTTONDOWN:
-                if (self->btn_callback && self->controller && 
-                    event.cbutton.which == SDL_JoystickInstanceID(
-                        SDL_GameControllerGetJoystick(self->controller))) {
-                    self->btn_callback(event.cbutton.button, self->btn_data);
                 }
                 break;
 
@@ -95,6 +91,17 @@ static gboolean gs_gamepad_manager_poll(gpointer user_data) {
             }
         }
     }
+
+    if (self->btn_callback && self->controller) {
+        for (int button = 0; button < SDL_CONTROLLER_BUTTON_MAX; button++) {
+            Uint8 pressed = SDL_GameControllerGetButton(self->controller, button);
+            if (pressed && !self->last_buttons[button]) {
+                self->btn_callback((SDL_GameControllerButton)button, self->btn_data);
+            }
+            self->last_buttons[button] = pressed;
+        }
+    }
+
     return G_SOURCE_CONTINUE;
 }
 
@@ -110,6 +117,7 @@ static void gs_gamepad_manager_init(GsGamepadManager *self) {
     self->config.haptic_feedback = TRUE;
     self->controller = NULL;
     self->running = FALSE;
+    memset(self->last_buttons, 0, sizeof(self->last_buttons));
 }
 
 GsGamepadManager *gs_gamepad_manager_new(void) {
@@ -126,12 +134,14 @@ void gs_gamepad_manager_start(GsGamepadManager *self) {
     if (self->running) return;
     
     self->running = TRUE;
+    SDL_GameControllerEventState(SDL_ENABLE);
     self->poll_source_id = g_timeout_add(POLL_INTERVAL_MS, gs_gamepad_manager_poll, self);
     
     // Проверяем уже подключенные геймпады
     for (int i = 0; i < SDL_NumJoysticks(); i++) {
         if (SDL_IsGameController(i)) {
             self->controller = SDL_GameControllerOpen(i);
+            memset(self->last_buttons, 0, sizeof(self->last_buttons));
             break;
         }
     }

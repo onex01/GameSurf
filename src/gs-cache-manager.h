@@ -1,9 +1,8 @@
-/* gs-cache-manager.h - Cache and cookies management */
 #ifndef GS_CACHE_MANAGER_H
 #define GS_CACHE_MANAGER_H
 
 #include <gtk/gtk.h>
-#include <webkit/webkit.h>   /* WebKitGTK 6.0 */
+#include <webkit/webkit.h>
 
 G_BEGIN_DECLS
 
@@ -11,10 +10,10 @@ G_BEGIN_DECLS
 G_DECLARE_FINAL_TYPE(GsCacheManager, gs_cache_manager, GS, CACHE_MANAGER, GObject)
 
 typedef enum {
-    GS_CLEAR_CACHE = 1 << 0,
-    GS_CLEAR_COOKIES = 1 << 1,
-    GS_CLEAR_HISTORY = 1 << 2,
-    GS_CLEAR_ALL = GS_CLEAR_CACHE | GS_CLEAR_COOKIES | GS_CLEAR_HISTORY,
+    GS_CLEAR_CACHE     = 1 << 0,
+    GS_CLEAR_COOKIES   = 1 << 1,
+    GS_CLEAR_HISTORY   = 1 << 2,
+    GS_CLEAR_ALL       = GS_CLEAR_CACHE | GS_CLEAR_COOKIES | GS_CLEAR_HISTORY,
 } GsClearDataFlags;
 
 typedef enum {
@@ -23,7 +22,7 @@ typedef enum {
     GS_COOKIE_POLICY_CURRENT,
 } GsCookiePolicy;
 
-GsCacheManager *gs_cache_manager_new(WebKitWebContext *context);
+GsCacheManager *gs_cache_manager_new(WebKitNetworkSession *session);
 
 void gs_cache_manager_clear_data_async(GsCacheManager *self,
     GsClearDataFlags flags,

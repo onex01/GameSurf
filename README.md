@@ -59,6 +59,11 @@ Or to run from build directory:
 GSETTINGS_SCHEMA_DIR=/usr/local/share/glib-2.0/schemas ./build/gamesurf
 ```
 
+For local testing or PortMaster-style wrappers, use the bundled launcher:
+```bash
+./scripts/gamesurf.sh
+```
+
 ## 🎮 Gamepad Controls
 
 | Button | Action |
@@ -66,12 +71,25 @@ GSETTINGS_SCHEMA_DIR=/usr/local/share/glib-2.0/schemas ./build/gamesurf
 | **A** | Click / Activate |
 | **B** | Back |
 | **X** | Toggle mode (cursor/navigation) |
-| **Y** | Toggle virtual keyboard |
-| **L/R Trigger** | Scroll up/down |
-| **D-Pad** | Navigate (in navigation mode) |
+| **Y** | Reload page |
+| **L/R Shoulder** | Back / Forward |
+| **D-Pad** | Navigate focusable page elements |
 | **Analog Sticks** | Cursor movement or page navigation |
-| **Start** | Open home page |
-| **Select** | Toggle settings menu |
+| **Start** | Open virtual keyboard for focused web input |
+| **Left Stick Press** | Open address bar input |
+| **Right Stick Press** | Hide/show browser chrome |
+| **Select/Back** | Open settings |
+
+When the virtual keyboard is open:
+
+| Button | Action |
+|--------|--------|
+| **A** | Press focused key |
+| **B / Start** | Close keyboard |
+| **X** | Backspace |
+| **Y** | Switch keyboard layout |
+| **L/R Shoulder** | Move text cursor |
+| **D-Pad / Left Stick** | Move between keys |
 
 ## ⚙️ Configuration
 

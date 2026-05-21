@@ -14,33 +14,33 @@ typedef struct {
 /* QWERTY layouts */
 static const char *layout_en_rows[] = {
     "1 2 3 4 5 6 7 8 9 0 ⌫",
-    "Q W E R T Y U I O P",
-    "A S D F G H J K L ✓",
-    "Z X C V B N M , . !",
+    "q w e r t y u i o p",
+    "a s d f g h j k l ✓",
+    "z x c v b n m , . !",
     "Shift Space @",
 };
 
 static const char *layout_ru_rows[] = {
     "1 2 3 4 5 6 7 8 9 0 ⌫",
-    "Й Ц У К Е Н Г Ш Щ З",
-    "Ф Ы В А П Р О Л Д Ж",
-    "Я Ч С М И Т Ь Б Ю !",
+    "й ц у к е н г ш щ з",
+    "ф ы в а п р о л д ж",
+    "я ч с м и т ь б ю !",
     "Shift Space @",
 };
 
 static const char *layout_de_rows[] = {
     "1 2 3 4 5 6 7 8 9 0 ⌫",
-    "Q W E R T Z U I O P",
-    "A S D F G H J K L Ö",
-    "Y X C V B N M , . !",
+    "q w e r t z u i o p",
+    "a s d f g h j k l ö",
+    "y x c v b n m , . !",
     "Shift Space @",
 };
 
 static const char *layout_fr_rows[] = {
     "1 2 3 4 5 6 7 8 9 0 ⌫",
-    "A Z E R T Y U I O P",
-    "Q S D F G H J K L M",
-    "W X C V B N , ; : !",
+    "a z e r t y u i o p",
+    "q s d f g h j k l m",
+    "w x c v b n , ; : !",
     "Shift Space @",
 };
 
@@ -75,8 +75,11 @@ struct _GsVirtualKeyboardV2 {
     GtkBox parent_instance;
     
     /* Layout */
+    GtkWidget *top_bar;
+    GtkWidget *layout_label;
     GtkWidget *grid;
     gint current_layout_idx;
+    char **enabled_layouts;
     
     /* Keys */
     GArray *keys;            /* GtkWidget* buttons */
@@ -100,7 +103,19 @@ struct _GsVirtualKeyboardV2 {
 
 G_DEFINE_TYPE(GsVirtualKeyboardV2, gs_virtual_keyboard_v2, GTK_TYPE_BOX)
 
-static void gs_virtual_keyboard_v2_class_init(GsVirtualKeyboardV2Class *class) {}
+static void gs_virtual_keyboard_v2_finalize(GObject *object) {
+    GsVirtualKeyboardV2 *self = GS_VIRTUAL_KEYBOARD_V2(object);
+
+    g_clear_pointer(&self->keys, g_array_unref);
+    g_clear_pointer(&self->enabled_layouts, g_strfreev);
+
+    G_OBJECT_CLASS(gs_virtual_keyboard_v2_parent_class)->finalize(object);
+}
+
+static void gs_virtual_keyboard_v2_class_init(GsVirtualKeyboardV2Class *class) {
+    GObjectClass *object_class = G_OBJECT_CLASS(class);
+    object_class->finalize = gs_virtual_keyboard_v2_finalize;
+}
 
 static void gs_virtual_keyboard_v2_init(GsVirtualKeyboardV2 *self) {
     gtk_orientable_set_orientation(GTK_ORIENTABLE(self), GTK_ORIENTATION_VERTICAL);
@@ -110,6 +125,7 @@ static void gs_virtual_keyboard_v2_init(GsVirtualKeyboardV2 *self) {
     self->keys = g_array_new(FALSE, FALSE, sizeof(GtkWidget *));
     self->focused_key = 0;
     self->current_layout_idx = 0;
+    self->enabled_layouts = g_strsplit("en,ru", ",", -1);
     self->shift_active = FALSE;
     self->caps_lock = FALSE;
     self->alt_active = FALSE;
@@ -120,6 +136,40 @@ GsVirtualKeyboardV2 *gs_virtual_keyboard_v2_new(void) {
     return g_object_new(GS_TYPE_VIRTUAL_KEYBOARD_V2, NULL);
 }
 
+static gboolean is_layout_enabled(GsVirtualKeyboardV2 *self, const char *code) {
+    if (!self->enabled_layouts || !self->enabled_layouts[0]) {
+        return g_strcmp0(code, "en") == 0;
+    }
+
+    for (guint i = 0; self->enabled_layouts[i]; i++) {
+        if (g_strcmp0(self->enabled_layouts[i], code) == 0) {
+            return TRUE;
+        }
+    }
+
+    return FALSE;
+}
+
+static void update_layout_label(GsVirtualKeyboardV2 *self) {
+    if (!self->layout_label) {
+        return;
+    }
+
+    const KeyboardLayout *layout = &available_layouts[self->current_layout_idx];
+    g_autofree char *text = g_strdup_printf("%s - %s", layout->code, layout->name);
+    gtk_label_set_text(GTK_LABEL(self->layout_label), text);
+}
+
+static gint find_layout_index(const char *lang_code) {
+    for (guint i = 0; i < G_N_ELEMENTS(available_layouts); i++) {
+        if (g_strcmp0(available_layouts[i].code, lang_code) == 0) {
+            return (gint)i;
+        }
+    }
+
+    return -1;
+}
+
 static void rebuild_keyboard(GsVirtualKeyboardV2 *self) {
     /* Clear old keyboard */
     if (self->grid) {
@@ -127,6 +177,29 @@ static void rebuild_keyboard(GsVirtualKeyboardV2 *self) {
         self->grid = NULL;
     }
     g_array_set_size(self->keys, 0);
+
+    if (!self->top_bar) {
+        self->top_bar = gtk_box_new(GTK_ORIENTATION_HORIZONTAL, 8);
+        gtk_widget_add_css_class(self->top_bar, "keyboard-top-bar");
+        gtk_box_append(GTK_BOX(self), self->top_bar);
+
+        GtkWidget *caption = gtk_label_new("Layout");
+        gtk_widget_add_css_class(caption, "keyboard-caption");
+        gtk_box_append(GTK_BOX(self->top_bar), caption);
+
+        self->layout_label = gtk_label_new("");
+        gtk_widget_add_css_class(self->layout_label, "keyboard-layout-label");
+        gtk_box_append(GTK_BOX(self->top_bar), self->layout_label);
+    }
+
+    if (!is_layout_enabled(self, available_layouts[self->current_layout_idx].code)) {
+        for (guint i = 0; i < G_N_ELEMENTS(available_layouts); i++) {
+            if (is_layout_enabled(self, available_layouts[i].code)) {
+                self->current_layout_idx = i;
+                break;
+            }
+        }
+    }
     
     self->grid = gtk_grid_new();
     gtk_grid_set_column_spacing(GTK_GRID(self->grid), 2);
@@ -135,6 +208,7 @@ static void rebuild_keyboard(GsVirtualKeyboardV2 *self) {
     gtk_box_append(GTK_BOX(self), self->grid);
     
     const KeyboardLayout *layout = &available_layouts[self->current_layout_idx];
+    update_layout_label(self);
     
     for (gint row = 0; row < layout->num_rows; row++) {
         const char *row_str = layout->rows[row];
@@ -150,7 +224,6 @@ static void rebuild_keyboard(GsVirtualKeyboardV2 *self) {
             /* Set button size */
             gtk_widget_set_size_request(btn, 40, 40);
             
-            gint key_index = self->keys->len;
             g_array_append_val(self->keys, btn);
             
             gtk_grid_attach(GTK_GRID(self->grid), btn, col, row, 1, 1);
@@ -167,13 +240,18 @@ static void rebuild_keyboard(GsVirtualKeyboardV2 *self) {
         gtk_widget_add_css_class(focused, "focused");
     }
     
-    gtk_widget_show(self->grid);
+    gtk_widget_set_visible(self->grid, TRUE);
 }
 
 void gs_virtual_keyboard_v2_set_layout(GsVirtualKeyboardV2 *self, const char *lang_code) {
     for (guint i = 0; i < G_N_ELEMENTS(available_layouts); i++) {
         if (g_strcmp0(available_layouts[i].code, lang_code) == 0) {
             self->current_layout_idx = i;
+            if (!is_layout_enabled(self, lang_code)) {
+                g_strfreev(self->enabled_layouts);
+                self->enabled_layouts = g_new0(char *, 2);
+                self->enabled_layouts[0] = g_strdup(lang_code);
+            }
             rebuild_keyboard(self);
             return;
         }
@@ -185,6 +263,7 @@ void gs_virtual_keyboard_v2_set_layout(GsVirtualKeyboardV2 *self, const char *la
 }
 
 char **gs_virtual_keyboard_v2_list_layouts(GsVirtualKeyboardV2 *self, gint *count) {
+    (void)self;
     *count = G_N_ELEMENTS(available_layouts);
     char **result = g_new(char *, *count + 1);
     
@@ -198,6 +277,38 @@ char **gs_virtual_keyboard_v2_list_layouts(GsVirtualKeyboardV2 *self, gint *coun
 
 const char *gs_virtual_keyboard_v2_get_current_layout(GsVirtualKeyboardV2 *self) {
     return available_layouts[self->current_layout_idx].code;
+}
+
+const char *gs_virtual_keyboard_v2_get_current_layout_name(GsVirtualKeyboardV2 *self) {
+    return available_layouts[self->current_layout_idx].name;
+}
+
+const char *gs_virtual_keyboard_v2_get_layout_name(const char *lang_code) {
+    gint idx = find_layout_index(lang_code);
+    return idx >= 0 ? available_layouts[idx].name : lang_code;
+}
+
+void gs_virtual_keyboard_v2_set_enabled_layouts(GsVirtualKeyboardV2 *self, const char * const *lang_codes) {
+    g_return_if_fail(GS_IS_VIRTUAL_KEYBOARD_V2(self));
+
+    g_strfreev(self->enabled_layouts);
+    self->enabled_layouts = NULL;
+
+    if (lang_codes && lang_codes[0]) {
+        guint count = 0;
+        while (lang_codes[count]) {
+            count++;
+        }
+
+        self->enabled_layouts = g_new0(char *, count + 1);
+        for (guint i = 0; i < count; i++) {
+            self->enabled_layouts[i] = g_strdup(lang_codes[i]);
+        }
+    } else {
+        self->enabled_layouts = g_strsplit("en", ",", -1);
+    }
+
+    rebuild_keyboard(self);
 }
 
 void gs_virtual_keyboard_v2_set_target(GsVirtualKeyboardV2 *self, GtkWidget *target) {
@@ -250,23 +361,27 @@ void gs_virtual_keyboard_v2_handle_dpad(GsVirtualKeyboardV2 *self, gint dx, gint
 
 static void insert_text(GsVirtualKeyboardV2 *self, const char *text) {
     if (!self->target) return;
+
+    const char *inserted_text = text;
+    if (g_strcmp0(text, "Space") == 0) {
+        inserted_text = " ";
+    } else if (g_strcmp0(text, "⌫") == 0) {
+        gs_virtual_keyboard_v2_handle_button_x(self);
+        return;
+    }
     
     if (GTK_IS_ENTRY(self->target)) {
-        const char *current = gtk_editable_get_text(GTK_EDITABLE(self->target));
         gint position = gtk_editable_get_position(GTK_EDITABLE(self->target));
-        
-        char *new_text = g_strdup_printf("%.*s%s%s",
-            position, current, text, current + position);
-        
-        gtk_editable_set_text(GTK_EDITABLE(self->target), new_text);
-        gtk_editable_set_position(GTK_EDITABLE(self->target), position + 1);
-        
-        g_free(new_text);
+        gtk_editable_insert_text(GTK_EDITABLE(self->target),
+                                 inserted_text,
+                                 -1,
+                                 &position);
+        gtk_editable_set_position(GTK_EDITABLE(self->target), position);
     } else if (GTK_IS_TEXT_VIEW(self->target)) {
         GtkTextBuffer *buffer = gtk_text_view_get_buffer(GTK_TEXT_VIEW(self->target));
         GtkTextIter end;
         gtk_text_buffer_get_end_iter(buffer, &end);
-        gtk_text_buffer_insert(buffer, &end, text, -1);
+        gtk_text_buffer_insert(buffer, &end, inserted_text, -1);
     }
 }
 
@@ -285,14 +400,26 @@ void gs_virtual_keyboard_v2_handle_button_a(GsVirtualKeyboardV2 *self) {
         /* Confirm/Enter */
         if (self->target && GTK_IS_ENTRY(self->target)) {
             g_signal_emit_by_name(self->target, "activate");
+        } else if (self->key_pressed_cb) {
+            self->key_pressed_cb("Enter", self->key_pressed_data);
         }
         return;
     }
     
-    insert_text(self, label);
+    g_autofree char *text = NULL;
+    if ((self->shift_active || self->caps_lock) && g_utf8_strlen(label, -1) == 1) {
+        text = g_utf8_strup(label, -1);
+    } else {
+        text = g_strdup(label);
+    }
+
+    insert_text(self, text);
+    if (self->shift_active && !self->caps_lock) {
+        self->shift_active = FALSE;
+    }
     
     if (self->key_pressed_cb) {
-        self->key_pressed_cb(label, self->key_pressed_data);
+        self->key_pressed_cb(text, self->key_pressed_data);
     }
 }
 
@@ -309,22 +436,24 @@ void gs_virtual_keyboard_v2_handle_button_x(GsVirtualKeyboardV2 *self) {
     if (!self->target) return;
     
     if (GTK_IS_ENTRY(self->target)) {
-        const char *current = gtk_editable_get_text(GTK_EDITABLE(self->target));
         gint position = gtk_editable_get_position(GTK_EDITABLE(self->target));
         
         if (position > 0) {
-            char *new_text = g_strdup_printf("%.*s%s",
-                position - 1, current, current + position);
-            gtk_editable_set_text(GTK_EDITABLE(self->target), new_text);
+            gtk_editable_delete_text(GTK_EDITABLE(self->target), position - 1, position);
             gtk_editable_set_position(GTK_EDITABLE(self->target), position - 1);
-            g_free(new_text);
         }
     }
 }
 
 void gs_virtual_keyboard_v2_handle_button_y(GsVirtualKeyboardV2 *self) {
     /* Switch layout */
-    self->current_layout_idx = (self->current_layout_idx + 1) % G_N_ELEMENTS(available_layouts);
+    for (guint step = 1; step <= G_N_ELEMENTS(available_layouts); step++) {
+        guint idx = (self->current_layout_idx + step) % G_N_ELEMENTS(available_layouts);
+        if (is_layout_enabled(self, available_layouts[idx].code)) {
+            self->current_layout_idx = idx;
+            break;
+        }
+    }
     rebuild_keyboard(self);
 }
 
