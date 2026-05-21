@@ -15,7 +15,7 @@ typedef struct {
 static const char *layout_en_rows[] = {
     "1 2 3 4 5 6 7 8 9 0 ⌫",
     "q w e r t y u i o p",
-    "a s d f g h j k l ✓",
+    "a s d f g h j k l Enter",
     "z x c v b n m , . !",
     "Shift Space @",
 };
@@ -23,7 +23,7 @@ static const char *layout_en_rows[] = {
 static const char *layout_ru_rows[] = {
     "1 2 3 4 5 6 7 8 9 0 ⌫",
     "й ц у к е н г ш щ з",
-    "ф ы в а п р о л д ж",
+    "ф ы в а п р о л д Enter",
     "я ч с м и т ь б ю !",
     "Shift Space @",
 };
@@ -31,7 +31,7 @@ static const char *layout_ru_rows[] = {
 static const char *layout_de_rows[] = {
     "1 2 3 4 5 6 7 8 9 0 ⌫",
     "q w e r t z u i o p",
-    "a s d f g h j k l ö",
+    "a s d f g h j k l Enter",
     "y x c v b n m , . !",
     "Shift Space @",
 };
@@ -39,7 +39,7 @@ static const char *layout_de_rows[] = {
 static const char *layout_fr_rows[] = {
     "1 2 3 4 5 6 7 8 9 0 ⌫",
     "a z e r t y u i o p",
-    "q s d f g h j k l m",
+    "q s d f g h j k l Enter",
     "w x c v b n , ; : !",
     "Shift Space @",
 };
@@ -396,12 +396,12 @@ void gs_virtual_keyboard_v2_handle_button_a(GsVirtualKeyboardV2 *self) {
         return;
     }
     
-    if (g_strcmp0(label, "✓") == 0) {
+    if (g_strcmp0(label, "✓") == 0 || g_strcmp0(label, "Enter") == 0) {
         /* Confirm/Enter */
-        if (self->target && GTK_IS_ENTRY(self->target)) {
-            g_signal_emit_by_name(self->target, "activate");
-        } else if (self->key_pressed_cb) {
+        if (self->key_pressed_cb) {
             self->key_pressed_cb("Enter", self->key_pressed_data);
+        } else if (self->target && GTK_IS_ENTRY(self->target)) {
+            g_signal_emit_by_name(self->target, "activate");
         }
         return;
     }

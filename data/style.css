@@ -58,35 +58,46 @@
 }
 
 .header-bar {
-    background: #14171c;
-    padding: 8px;
-    border-bottom: 1px solid #303844;
+    background: linear-gradient(180deg, #18212b, #10141a);
+    padding: 10px 12px;
+    border-bottom: 1px solid #3aa76d;
 }
 
 .header-bar button {
-    min-width: 42px;
-    min-height: 38px;
-    border-radius: 6px;
-    background: #242b35;
+    min-width: 46px;
+    min-height: 42px;
+    border-radius: 8px;
+    background: #26313c;
     color: #eef3f8;
+    border: 1px solid #394757;
 }
 
 .header-bar entry {
-    min-height: 38px;
-    border-radius: 6px;
-    background: #0f1217;
+    min-height: 42px;
+    border-radius: 8px;
+    background: #080b10;
     color: #ffffff;
-    border: 1px solid #3a4654;
-    padding: 0 12px;
+    border: 1px solid #3aa76d;
+    padding: 0 14px;
+    font-size: 15px;
 }
 
 .control-hints {
-    background: #0f1217;
-    color: #b9c4cf;
-    border-bottom: 1px solid #242c36;
-    padding: 6px 10px;
+    background: #10151b;
+    color: #d6dee6;
+    border-bottom: 1px solid #2a3440;
+    padding: 8px 12px;
     font-size: 13px;
     font-weight: 600;
+}
+
+.virtual-cursor {
+    min-width: 18px;
+    min-height: 18px;
+    background: #3aa76d;
+    border: 3px solid #ffffff;
+    border-radius: 999px;
+    box-shadow: 0 0 0 2px rgba(0, 0, 0, 0.65), 0 0 14px rgba(58, 167, 109, 0.75);
 }
 
 /* Индикатор режима курсора */
@@ -118,6 +129,12 @@
 .settings-check {
     font-size: 16px;
     min-height: 36px;
+}
+
+.settings-focused {
+    outline: 3px solid #3aa76d;
+    outline-offset: 3px;
+    border-radius: 6px;
 }
 
 .settings-hint {

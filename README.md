@@ -74,10 +74,12 @@ For local testing or PortMaster-style wrappers, use the bundled launcher:
 | **Y** | Reload page |
 | **L/R Shoulder** | Back / Forward |
 | **D-Pad** | Navigate focusable page elements |
-| **Analog Sticks** | Cursor movement or page navigation |
+| **Left Stick** | Pointer movement or spatial focus navigation |
+| **Right Stick** | Scroll page |
+| **LT/RT** | Zoom out / zoom in |
 | **Start** | Open virtual keyboard for focused web input |
-| **Left Stick Press** | Open address bar input |
-| **Right Stick Press** | Hide/show browser chrome |
+| **L3/R3** | Zoom out / zoom in one step |
+| **Guide/Search** | Open address/search input when available |
 | **Select/Back** | Open settings |
 
 When the virtual keyboard is open:

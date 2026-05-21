@@ -10,6 +10,7 @@
 #include <webkit/webkit.h>
 #include <SDL2/SDL.h>
 #include <math.h>
+#include <string.h>
 
 struct _GsWindow {
     GtkApplicationWindow parent_instance;
@@ -23,6 +24,10 @@ struct _GsWindow {
     GtkWidget *menu_overlay;
     GtkWidget *status_label;
     GtkWidget *hint_label;
+    GtkWidget *search_engine_combo;
+    GtkWidget *settings_dialog;
+    GtkWidget *virtual_cursor;
+    GPtrArray *settings_focusables;
 
     /* Менеджеры */
     GsGamepadManager *gamepad;
@@ -41,7 +46,16 @@ struct _GsWindow {
     gboolean menu_visible;
     gboolean cursor_mode; // TRUE = эмуляция курсора, FALSE = фокусная навигация
     gboolean chrome_visible;
+    gboolean show_control_hints;
+    gboolean use_internal_cursor;
+    gboolean left_trigger_pressed;
+    gboolean right_trigger_pressed;
+    gint control_scheme;
+    gint settings_focus_index;
+    double virtual_cursor_x;
+    double virtual_cursor_y;
     gint64 last_axis_nav_time;
+    gint64 last_zoom_time;
     gint menu_index;
 };
 
@@ -52,10 +66,110 @@ static void open_keyboard_for_url(GsWindow *self);
 static void open_keyboard_for_page(GsWindow *self);
 static void set_chrome_visible(GsWindow *self, gboolean visible);
 static void on_cache_cleared(GObject *source_object, GAsyncResult *result, gpointer user_data);
+static void on_gamepad_extended_axis(float lx, float ly, float rx, float ry, float lt, float rt, gpointer user_data);
+static void update_virtual_cursor(GsWindow *self);
+static void click_virtual_cursor(GsWindow *self, int button);
+static void apply_hint_visibility(GsWindow *self);
+static void on_url_activate(GtkEntry *entry, GsWindow *self);
+
+static void settings_set_focus(GsWindow *self, gint index) {
+    if (!self->settings_focusables || self->settings_focusables->len == 0) {
+        return;
+    }
+
+    index = CLAMP(index, 0, (gint)self->settings_focusables->len - 1);
+
+    if (self->settings_focus_index >= 0 &&
+        self->settings_focus_index < (gint)self->settings_focusables->len) {
+        GtkWidget *old = g_ptr_array_index(self->settings_focusables, self->settings_focus_index);
+        gtk_widget_remove_css_class(old, "settings-focused");
+    }
+
+    self->settings_focus_index = index;
+    GtkWidget *widget = g_ptr_array_index(self->settings_focusables, self->settings_focus_index);
+    gtk_widget_add_css_class(widget, "settings-focused");
+    gtk_widget_grab_focus(widget);
+}
+
+static void settings_register_focusable(GsWindow *self, GtkWidget *widget) {
+    if (!self->settings_focusables) {
+        self->settings_focusables = g_ptr_array_new();
+    }
+
+    g_ptr_array_add(self->settings_focusables, widget);
+    if (self->settings_focusables->len == 1) {
+        settings_set_focus(self, 0);
+    }
+}
+
+static void settings_adjust_focused(GsWindow *self, gint direction) {
+    if (!self->settings_focusables || self->settings_focus_index < 0) {
+        return;
+    }
+
+    GtkWidget *widget = g_ptr_array_index(self->settings_focusables, self->settings_focus_index);
+
+    if (GTK_IS_RANGE(widget)) {
+        GtkAdjustment *adj = gtk_range_get_adjustment(GTK_RANGE(widget));
+        double step = gtk_adjustment_get_step_increment(adj);
+        double value = gtk_range_get_value(GTK_RANGE(widget)) + step * direction;
+        gtk_range_set_value(GTK_RANGE(widget), CLAMP(value,
+            gtk_adjustment_get_lower(adj), gtk_adjustment_get_upper(adj)));
+    } else if (GTK_IS_DROP_DOWN(widget)) {
+        guint selected = gtk_drop_down_get_selected(GTK_DROP_DOWN(widget));
+        guint count = g_list_model_get_n_items(gtk_drop_down_get_model(GTK_DROP_DOWN(widget)));
+        if (count > 0) {
+            gint next = CLAMP((gint)selected + direction, 0, (gint)count - 1);
+            gtk_drop_down_set_selected(GTK_DROP_DOWN(widget), next);
+        }
+    }
+}
+
+static void handle_settings_button(GsWindow *self, SDL_GameControllerButton btn) {
+    if (!self->settings_dialog) {
+        return;
+    }
+
+    switch (btn) {
+        case SDL_CONTROLLER_BUTTON_A: {
+            GtkWidget *focus = NULL;
+            if (self->settings_focusables && self->settings_focus_index >= 0) {
+                focus = g_ptr_array_index(self->settings_focusables, self->settings_focus_index);
+            }
+            if (focus) {
+                gtk_widget_activate(focus);
+            }
+            break;
+        }
+        case SDL_CONTROLLER_BUTTON_B:
+        case SDL_CONTROLLER_BUTTON_BACK:
+            gtk_window_destroy(GTK_WINDOW(self->settings_dialog));
+            break;
+        case SDL_CONTROLLER_BUTTON_DPAD_UP:
+            settings_set_focus(self, self->settings_focus_index - 1);
+            break;
+        case SDL_CONTROLLER_BUTTON_DPAD_DOWN:
+            settings_set_focus(self, self->settings_focus_index + 1);
+            break;
+        case SDL_CONTROLLER_BUTTON_DPAD_LEFT:
+            settings_adjust_focused(self, -1);
+            break;
+        case SDL_CONTROLLER_BUTTON_DPAD_RIGHT:
+            settings_adjust_focused(self, 1);
+            break;
+        default:
+            break;
+    }
+}
 
 // Обработчики геймпада
 static void on_gamepad_button(SDL_GameControllerButton btn, gpointer user_data) {
     GsWindow *self = GS_WINDOW(user_data);
+
+    if (self->settings_dialog) {
+        handle_settings_button(self, btn);
+        return;
+    }
 
     if (self->keyboard_visible) {
         switch (btn) {
@@ -89,8 +203,11 @@ static void on_gamepad_button(SDL_GameControllerButton btn, gpointer user_data) 
                 gs_virtual_keyboard_v2_handle_dpad(self->keyboard, 1, 0);
                 break;
             case SDL_CONTROLLER_BUTTON_START:
-                gs_virtual_keyboard_v2_hide(self->keyboard);
-                self->keyboard_visible = FALSE;
+                if (self->keyboard_targets_url) {
+                    on_url_activate(GTK_ENTRY(self->url_entry), self);
+                } else {
+                    gs_web_view_press_enter(GS_WEB_VIEW(self->web_view));
+                }
                 break;
             case SDL_CONTROLLER_BUTTON_LEFTSHOULDER:
                 if (self->keyboard_targets_url) {
@@ -117,11 +234,14 @@ static void on_gamepad_button(SDL_GameControllerButton btn, gpointer user_data) 
     switch (btn) {
         case SDL_CONTROLLER_BUTTON_A:
             if (self->cursor_mode) {
-                gs_cursor_controller_click(self->cursor, TRUE);
-                gs_cursor_controller_click(self->cursor, FALSE);
+                click_virtual_cursor(self, 1);
             } else {
                 gs_web_view_gamepad_activate(GS_WEB_VIEW(self->web_view));
             }
+            break;
+
+        case SDL_CONTROLLER_BUTTON_RIGHTSTICK:
+            click_virtual_cursor(self, 3);
             break;
 
         case SDL_CONTROLLER_BUTTON_B:
@@ -146,11 +266,11 @@ static void on_gamepad_button(SDL_GameControllerButton btn, gpointer user_data) 
             break;
 
         case SDL_CONTROLLER_BUTTON_LEFTSTICK:
-            open_keyboard_for_url(self);
+            gs_web_view_set_zoom_delta(GS_WEB_VIEW(self->web_view), -0.1);
             break;
 
-        case SDL_CONTROLLER_BUTTON_RIGHTSTICK:
-            set_chrome_visible(self, !self->chrome_visible);
+        case SDL_CONTROLLER_BUTTON_GUIDE:
+            open_keyboard_for_url(self);
             break;
 
         case SDL_CONTROLLER_BUTTON_START:
@@ -184,7 +304,17 @@ static void on_gamepad_button(SDL_GameControllerButton btn, gpointer user_data) 
 }
 
 static void on_gamepad_axis(float x, float y, gpointer user_data) {
+    (void)x;
+    (void)y;
+    (void)user_data;
+}
+
+static void on_gamepad_extended_axis(float lx, float ly, float rx, float ry, float lt, float rt, gpointer user_data) {
     GsWindow *self = GS_WINDOW(user_data);
+
+    if (self->settings_dialog) {
+        return;
+    }
 
     if (self->keyboard_visible) {
         gint64 now = g_get_monotonic_time();
@@ -192,37 +322,79 @@ static void on_gamepad_axis(float x, float y, gpointer user_data) {
             return;
         }
 
-        if (fabs(x) > 0.55f || fabs(y) > 0.55f) {
+        if (fabs(lx) > 0.55f || fabs(ly) > 0.55f) {
             gs_virtual_keyboard_v2_handle_dpad(self->keyboard,
-                fabs(x) > fabs(y) ? (x > 0 ? 1 : -1) : 0,
-                fabs(y) >= fabs(x) ? (y > 0 ? 1 : -1) : 0);
+                fabs(lx) > fabs(ly) ? (lx > 0 ? 1 : -1) : 0,
+                fabs(ly) >= fabs(lx) ? (ly > 0 ? 1 : -1) : 0);
             self->last_axis_nav_time = now;
         }
         return;
     }
 
-    if (self->cursor_mode && (fabs(x) > 0.01 || fabs(y) > 0.01)) {
+    if (self->cursor_mode && (fabs(lx) > 0.01 || fabs(ly) > 0.01)) {
         // Эмуляция курсора с ускорением
-        float speed = sqrt(x*x + y*y);
+        float speed = sqrt(lx*lx + ly*ly);
         float accel = 1.0f + speed * 2.0f; // Ускорение при сильном наклоне
-        gs_cursor_controller_move(self->cursor, x * accel * 5.0f, y * accel * 5.0f);
+        if (self->use_internal_cursor) {
+            self->virtual_cursor_x += lx * accel * 5.0f;
+            self->virtual_cursor_y += ly * accel * 5.0f;
+            update_virtual_cursor(self);
+        } else {
+            gs_cursor_controller_move(self->cursor, lx * accel * 5.0f, ly * accel * 5.0f);
+        }
     } else if (!self->cursor_mode) {
         gint64 now = g_get_monotonic_time();
-        if (now - self->last_axis_nav_time > 220000 && (fabs(x) > 0.55f || fabs(y) > 0.55f)) {
+        if (now - self->last_axis_nav_time > 220000 && (fabs(lx) > 0.55f || fabs(ly) > 0.55f)) {
             gs_web_view_gamepad_navigate(GS_WEB_VIEW(self->web_view),
-                fabs(x) > fabs(y) ? (x > 0 ? 1 : -1) : 0,
-                fabs(y) >= fabs(x) ? (y > 0 ? 1 : -1) : 0);
+                fabs(lx) > fabs(ly) ? (lx > 0 ? 1 : -1) : 0,
+                fabs(ly) >= fabs(lx) ? (ly > 0 ? 1 : -1) : 0);
             self->last_axis_nav_time = now;
-        } else if (fabs(y) > 0.18f) {
-            gs_web_view_scroll(GS_WEB_VIEW(self->web_view), 0, (int)(y * 32.0f));
         }
     }
+
+    if (fabs(ry) > 0.12f || fabs(rx) > 0.20f) {
+        gs_web_view_scroll(GS_WEB_VIEW(self->web_view), (int)(rx * 24.0f), (int)(ry * 42.0f));
+        if (self->show_control_hints) {
+            gtk_widget_set_visible(self->hint_label, FALSE);
+        }
+    }
+
+    if (fabs(rt - lt) > 0.20f) {
+        gint64 now = g_get_monotonic_time();
+        if (self->control_scheme == 1) {
+            if (lt > 0.55f && !self->left_trigger_pressed) {
+                click_virtual_cursor(self, 1);
+            }
+            if (rt > 0.55f && !self->right_trigger_pressed) {
+                click_virtual_cursor(self, 3);
+            }
+        } else if (now - self->last_zoom_time > 120000) {
+            gs_web_view_set_zoom_delta(GS_WEB_VIEW(self->web_view), (rt - lt) * 0.04);
+            self->last_zoom_time = now;
+        }
+    }
+
+    self->left_trigger_pressed = lt > 0.55f;
+    self->right_trigger_pressed = rt > 0.55f;
 }
 
 // UI Callbacks
+static gboolean looks_like_url(const char *text) {
+    return g_str_has_prefix(text, "http://") ||
+           g_str_has_prefix(text, "https://") ||
+           g_str_has_prefix(text, "file://") ||
+           (strchr(text, '.') && !strchr(text, ' '));
+}
+
 static void on_url_activate(GtkEntry *entry, GsWindow *self) {
     const char *url = gtk_editable_get_text(GTK_EDITABLE(entry));
-    if (!g_str_has_prefix(url, "http://") && !g_str_has_prefix(url, "https://")) {
+    if (!looks_like_url(url)) {
+        GSettings *settings = gs_settings_get_default();
+        g_autofree char *template = g_settings_get_string(settings, "search-engine");
+        g_autofree char *escaped = g_uri_escape_string(url, NULL, TRUE);
+        g_autofree char *search_url = g_strdup_printf(template, escaped);
+        webkit_web_view_load_uri(WEBKIT_WEB_VIEW(self->web_view), search_url);
+    } else if (!g_str_has_prefix(url, "http://") && !g_str_has_prefix(url, "https://") && !g_str_has_prefix(url, "file://")) {
         char *full_url = g_strdup_printf("https://%s", url);
         webkit_web_view_load_uri(WEBKIT_WEB_VIEW(self->web_view), full_url);
         g_free(full_url);
@@ -254,15 +426,61 @@ static void on_reload_clicked(GtkButton *button, GsWindow *self) {
 }
 
 static void update_hint(GsWindow *self, const char *text) {
+    if (!self->show_control_hints) {
+        return;
+    }
     gtk_label_set_text(GTK_LABEL(self->hint_label), text);
+    apply_hint_visibility(self);
+}
+
+static void apply_hint_visibility(GsWindow *self) {
+    gtk_widget_set_visible(self->hint_label, self->show_control_hints && self->chrome_visible);
 }
 
 static void set_chrome_visible(GsWindow *self, gboolean visible) {
     self->chrome_visible = visible;
     gtk_widget_set_visible(self->header, visible);
+    apply_hint_visibility(self);
     update_hint(self, visible
-        ? "A click  B back  L/R history  Start page keyboard  L3 address  Select settings  R3 hide bar"
-        : "R3 show bar  Start keyboard  A play/click  B back");
+        ? "A click  B back  L1/R1 history  Left stick pointer/focus  Right stick scroll  LT/RT zoom  Start keyboard"
+        : "Fullscreen: Right stick scroll  LT/RT zoom  Start keyboard  A play/click  B back");
+}
+
+static void update_virtual_cursor(GsWindow *self) {
+    if (!self->virtual_cursor) {
+        return;
+    }
+
+    int width = gtk_widget_get_width(self->overlay);
+    int height = gtk_widget_get_height(self->overlay);
+    self->virtual_cursor_x = CLAMP(self->virtual_cursor_x, 0.0, MAX(1, width - 18));
+    self->virtual_cursor_y = CLAMP(self->virtual_cursor_y, 0.0, MAX(1, height - 18));
+
+    gtk_widget_set_margin_start(self->virtual_cursor, (int)self->virtual_cursor_x);
+    gtk_widget_set_margin_top(self->virtual_cursor, (int)self->virtual_cursor_y);
+    gtk_widget_set_visible(self->virtual_cursor, self->use_internal_cursor && self->cursor_mode);
+}
+
+static void click_virtual_cursor(GsWindow *self, int button) {
+    if (!self->use_internal_cursor) {
+        if (button == 1) {
+            gs_cursor_controller_click(self->cursor, TRUE);
+            gs_cursor_controller_click(self->cursor, FALSE);
+        } else {
+            gs_cursor_controller_right_click(self->cursor);
+        }
+        return;
+    }
+
+    graphene_rect_t bounds;
+    double x = self->virtual_cursor_x;
+    double y = self->virtual_cursor_y;
+    if (gtk_widget_compute_bounds(self->web_view, self->overlay, &bounds)) {
+        x -= bounds.origin.x;
+        y -= bounds.origin.y;
+    }
+
+    gs_web_view_click_at(GS_WEB_VIEW(self->web_view), (int)x, (int)y, button);
 }
 
 static void open_keyboard_for_url(GsWindow *self) {
@@ -273,7 +491,7 @@ static void open_keyboard_for_url(GsWindow *self) {
     gs_virtual_keyboard_v2_set_target(self->keyboard, self->url_entry);
     gs_virtual_keyboard_v2_show(self->keyboard);
     set_chrome_visible(self, TRUE);
-    update_hint(self, "URL input: D-Pad/Stick choose  A type  X delete  L/R caret  Y language  OK opens");
+    update_hint(self, "URL/Search: D-Pad/Stick choose  A type  X delete  L1/R1 caret  Y language  OK opens");
 }
 
 static void open_keyboard_for_page(GsWindow *self) {
@@ -281,13 +499,16 @@ static void open_keyboard_for_page(GsWindow *self) {
     self->keyboard_visible = TRUE;
     gs_virtual_keyboard_v2_set_target(self->keyboard, NULL);
     gs_virtual_keyboard_v2_show(self->keyboard);
-    update_hint(self, "Page input: D-Pad/Stick choose  A type  X delete  L/R caret  Y language  OK submits");
+    update_hint(self, "Page input: D-Pad/Stick choose  A type  X delete  L1/R1 caret  Y language  OK submits");
 }
 
 static void on_keyboard_key_pressed(const char *key, gpointer user_data) {
     GsWindow *self = GS_WINDOW(user_data);
 
     if (self->keyboard_targets_url) {
+        if (g_strcmp0(key, "Enter") == 0) {
+            on_url_activate(GTK_ENTRY(self->url_entry), self);
+        }
         return;
     }
 
@@ -301,7 +522,7 @@ static void on_keyboard_key_pressed(const char *key, gpointer user_data) {
 static void on_keyboard_closed(gpointer user_data) {
     GsWindow *self = GS_WINDOW(user_data);
     self->keyboard_visible = FALSE;
-    update_hint(self, "A click  B back  L/R history  Start page keyboard  L3 address  Select settings");
+    update_hint(self, "A click  B back  L1/R1 history  Left stick pointer/focus  Right stick scroll  LT/RT zoom  Start keyboard");
 }
 
 static gboolean on_web_view_enter_fullscreen(WebKitWebView *web_view, GsWindow *self) {
@@ -384,6 +605,100 @@ static void on_setting_check_toggled(GtkCheckButton *button, gpointer user_data)
     g_settings_set_boolean(settings, key, gtk_check_button_get_active(button));
 }
 
+static void on_show_hints_toggled(GtkCheckButton *button, GsWindow *self) {
+    GSettings *settings = gs_settings_get_default();
+    self->show_control_hints = gtk_check_button_get_active(button);
+    g_settings_set_boolean(settings, "show-control-hints", self->show_control_hints);
+    apply_hint_visibility(self);
+}
+
+static void on_internal_cursor_toggled(GtkCheckButton *button, GsWindow *self) {
+    GSettings *settings = gs_settings_get_default();
+    self->use_internal_cursor = gtk_check_button_get_active(button);
+    g_settings_set_boolean(settings, "use-internal-cursor", self->use_internal_cursor);
+    update_virtual_cursor(self);
+}
+
+static void apply_gamepad_settings(GsWindow *self) {
+    GSettings *settings = gs_settings_get_default();
+    GsGamepadConfig config = {
+        .sensitivity = g_settings_get_double(settings, "cursor-sensitivity"),
+        .deadzone = g_settings_get_double(settings, "stick-deadzone"),
+        .speed_mode = (GsCursorSpeed)g_settings_get_int(settings, "cursor-speed"),
+        .invert_y = g_settings_get_boolean(settings, "invert-y-axis"),
+        .haptic_feedback = g_settings_get_boolean(settings, "haptic-feedback")
+    };
+    gs_gamepad_manager_set_config(self->gamepad, &config);
+}
+
+static void on_sensitivity_changed(GtkRange *range, GsWindow *self) {
+    GSettings *settings = gs_settings_get_default();
+    g_settings_set_double(settings, "cursor-sensitivity", gtk_range_get_value(range));
+    apply_gamepad_settings(self);
+}
+
+static void on_deadzone_changed(GtkRange *range, GsWindow *self) {
+    GSettings *settings = gs_settings_get_default();
+    g_settings_set_double(settings, "stick-deadzone", gtk_range_get_value(range));
+    apply_gamepad_settings(self);
+}
+
+static void on_cursor_speed_changed(GtkDropDown *dropdown, gpointer user_data) {
+    GsWindow *self = GS_WINDOW(user_data);
+    GSettings *settings = gs_settings_get_default();
+    g_settings_set_int(settings, "cursor-speed", (gint)gtk_drop_down_get_selected(dropdown));
+    apply_gamepad_settings(self);
+}
+
+static void on_search_engine_changed(GtkDropDown *dropdown, gpointer user_data) {
+    (void)user_data;
+    GSettings *settings = gs_settings_get_default();
+    guint selected = gtk_drop_down_get_selected(dropdown);
+    const char *engine = "https://duckduckgo.com/?q=%s";
+
+    switch (selected) {
+        case 1:
+            engine = "https://www.google.com/search?q=%s";
+            break;
+        case 2:
+            engine = "https://www.bing.com/search?q=%s";
+            break;
+        case 3:
+            engine = "https://search.brave.com/search?q=%s";
+            break;
+        default:
+            break;
+    }
+
+    g_settings_set_string(settings, "search-engine", engine);
+}
+
+static void on_control_scheme_changed(GtkDropDown *dropdown, gpointer user_data) {
+    GsWindow *self = GS_WINDOW(user_data);
+    GSettings *settings = gs_settings_get_default();
+    self->control_scheme = (gint)gtk_drop_down_get_selected(dropdown);
+    g_settings_set_int(settings, "control-scheme", self->control_scheme);
+    update_hint(self, self->control_scheme == 1
+        ? "Mouse trigger mode: LT left click  RT right click  Left stick cursor  Right stick scroll"
+        : "Console mode: A click  B back  L1/R1 history  Right stick scroll  LT/RT zoom");
+}
+
+static GtkWidget *create_labeled_scale(const char *label_text, double min, double max, double step, double value) {
+    GtkWidget *box = gtk_box_new(GTK_ORIENTATION_VERTICAL, 4);
+    GtkWidget *label = gtk_label_new(label_text);
+    GtkWidget *scale = gtk_scale_new_with_range(GTK_ORIENTATION_HORIZONTAL, min, max, step);
+
+    gtk_widget_set_halign(label, GTK_ALIGN_START);
+    gtk_range_set_value(GTK_RANGE(scale), value);
+    gtk_scale_set_draw_value(GTK_SCALE(scale), TRUE);
+    gtk_scale_set_digits(GTK_SCALE(scale), 2);
+    gtk_box_append(GTK_BOX(box), label);
+    gtk_box_append(GTK_BOX(box), scale);
+    g_object_set_data(G_OBJECT(box), "scale", scale);
+
+    return box;
+}
+
 static void on_clear_cache_clicked(GtkButton *button, GsWindow *self) {
     (void)button;
     gs_cache_manager_clear_data_async(self->cache_manager, GS_CLEAR_CACHE, on_cache_cleared, NULL);
@@ -397,11 +712,21 @@ static void on_clear_cookies_clicked(GtkButton *button, GsWindow *self) {
 }
 
 static void show_settings_dialog(GsWindow *self) {
+    if (self->settings_dialog) {
+        gtk_window_present(GTK_WINDOW(self->settings_dialog));
+        return;
+    }
+
     GtkWidget *dialog = gtk_window_new();
+    self->settings_dialog = dialog;
+    g_clear_pointer(&self->settings_focusables, g_ptr_array_unref);
+    self->settings_focusables = g_ptr_array_new();
+    self->settings_focus_index = -1;
     gtk_window_set_title(GTK_WINDOW(dialog), "GameSurf Settings");
     gtk_window_set_default_size(GTK_WINDOW(dialog), 520, 420);
     gtk_window_set_modal(GTK_WINDOW(dialog), TRUE);
     gtk_window_set_transient_for(GTK_WINDOW(dialog), GTK_WINDOW(self));
+    g_signal_connect_swapped(dialog, "destroy", G_CALLBACK(g_nullify_pointer), &self->settings_dialog);
 
     GtkWidget *box = gtk_box_new(GTK_ORIENTATION_VERTICAL, 14);
     gtk_widget_add_css_class(box, "settings-panel");
@@ -421,8 +746,9 @@ static void show_settings_dialog(GsWindow *self) {
     const char *codes[] = { "en", "ru", "de", "fr", NULL };
 
     for (guint i = 0; codes[i]; i++) {
-        GtkWidget *check = create_language_check(self, codes[i], (const char * const *)enabled_layouts);
+    GtkWidget *check = create_language_check(self, codes[i], (const char * const *)enabled_layouts);
         gtk_box_append(GTK_BOX(language_box), check);
+        settings_register_focusable(self, check);
         g_signal_connect(check, "toggled", G_CALLBACK(on_language_check_toggled), language_box);
     }
 
@@ -430,6 +756,79 @@ static void show_settings_dialog(GsWindow *self) {
     gtk_widget_add_css_class(hint, "settings-hint");
     gtk_widget_set_halign(hint, GTK_ALIGN_START);
     gtk_box_append(GTK_BOX(box), hint);
+
+    GtkWidget *search_title = gtk_label_new("Search");
+    gtk_widget_add_css_class(search_title, "settings-title");
+    gtk_widget_set_halign(search_title, GTK_ALIGN_START);
+    gtk_box_append(GTK_BOX(box), search_title);
+
+    GtkWidget *search_box = gtk_box_new(GTK_ORIENTATION_VERTICAL, 8);
+    gtk_widget_add_css_class(search_box, "settings-group");
+    gtk_box_append(GTK_BOX(box), search_box);
+
+    const char *engine_names[] = { "DuckDuckGo", "Google", "Bing", "Brave Search", NULL };
+    GtkStringList *engine_model = gtk_string_list_new(engine_names);
+    self->search_engine_combo = gtk_drop_down_new(G_LIST_MODEL(engine_model), NULL);
+    g_autofree char *engine = g_settings_get_string(settings, "search-engine");
+    guint selected = 0;
+    if (g_strcmp0(engine, "https://www.google.com/search?q=%s") == 0) selected = 1;
+    else if (g_strcmp0(engine, "https://www.bing.com/search?q=%s") == 0) selected = 2;
+    else if (g_strcmp0(engine, "https://search.brave.com/search?q=%s") == 0) selected = 3;
+    gtk_drop_down_set_selected(GTK_DROP_DOWN(self->search_engine_combo), selected);
+    gtk_box_append(GTK_BOX(search_box), self->search_engine_combo);
+    settings_register_focusable(self, self->search_engine_combo);
+    g_signal_connect(self->search_engine_combo, "notify::selected", G_CALLBACK(on_search_engine_changed), NULL);
+
+    GtkWidget *controls_title = gtk_label_new("Controller");
+    gtk_widget_add_css_class(controls_title, "settings-title");
+    gtk_widget_set_halign(controls_title, GTK_ALIGN_START);
+    gtk_box_append(GTK_BOX(box), controls_title);
+
+    GtkWidget *controls_box = gtk_box_new(GTK_ORIENTATION_VERTICAL, 8);
+    gtk_widget_add_css_class(controls_box, "settings-group");
+    gtk_box_append(GTK_BOX(box), controls_box);
+
+    GtkWidget *show_hints_check = gtk_check_button_new_with_label("Show control hints");
+    gtk_check_button_set_active(GTK_CHECK_BUTTON(show_hints_check), self->show_control_hints);
+    gtk_box_append(GTK_BOX(controls_box), show_hints_check);
+    settings_register_focusable(self, show_hints_check);
+    g_signal_connect(show_hints_check, "toggled", G_CALLBACK(on_show_hints_toggled), self);
+
+    GtkWidget *internal_cursor_check = gtk_check_button_new_with_label("Use internal browser cursor");
+    gtk_check_button_set_active(GTK_CHECK_BUTTON(internal_cursor_check), self->use_internal_cursor);
+    gtk_box_append(GTK_BOX(controls_box), internal_cursor_check);
+    settings_register_focusable(self, internal_cursor_check);
+    g_signal_connect(internal_cursor_check, "toggled", G_CALLBACK(on_internal_cursor_toggled), self);
+
+    GtkWidget *sensitivity_box = create_labeled_scale("Cursor sensitivity", 0.1, 5.0, 0.1,
+        g_settings_get_double(settings, "cursor-sensitivity"));
+    GtkWidget *sensitivity_scale = g_object_get_data(G_OBJECT(sensitivity_box), "scale");
+    gtk_box_append(GTK_BOX(controls_box), sensitivity_box);
+    settings_register_focusable(self, sensitivity_scale);
+    g_signal_connect(sensitivity_scale, "value-changed", G_CALLBACK(on_sensitivity_changed), self);
+
+    GtkWidget *deadzone_box = create_labeled_scale("Stick deadzone", 0.0, 0.5, 0.01,
+        g_settings_get_double(settings, "stick-deadzone"));
+    GtkWidget *deadzone_scale = g_object_get_data(G_OBJECT(deadzone_box), "scale");
+    gtk_box_append(GTK_BOX(controls_box), deadzone_box);
+    settings_register_focusable(self, deadzone_scale);
+    g_signal_connect(deadzone_scale, "value-changed", G_CALLBACK(on_deadzone_changed), self);
+
+    const char *speed_names[] = { "Slow", "Normal", "Fast", NULL };
+    GtkStringList *speed_model = gtk_string_list_new(speed_names);
+    GtkWidget *speed_dropdown = gtk_drop_down_new(G_LIST_MODEL(speed_model), NULL);
+    gtk_drop_down_set_selected(GTK_DROP_DOWN(speed_dropdown), g_settings_get_int(settings, "cursor-speed"));
+    gtk_box_append(GTK_BOX(controls_box), speed_dropdown);
+    settings_register_focusable(self, speed_dropdown);
+    g_signal_connect(speed_dropdown, "notify::selected", G_CALLBACK(on_cursor_speed_changed), self);
+
+    const char *schemes[] = { "Console browser", "Mouse triggers", NULL };
+    GtkStringList *scheme_model = gtk_string_list_new(schemes);
+    GtkWidget *scheme_dropdown = gtk_drop_down_new(G_LIST_MODEL(scheme_model), NULL);
+    gtk_drop_down_set_selected(GTK_DROP_DOWN(scheme_dropdown), CLAMP(self->control_scheme, 0, 1));
+    gtk_box_append(GTK_BOX(controls_box), scheme_dropdown);
+    settings_register_focusable(self, scheme_dropdown);
+    g_signal_connect(scheme_dropdown, "notify::selected", G_CALLBACK(on_control_scheme_changed), self);
 
     GtkWidget *cache_title = gtk_label_new("Cache and cookies");
     gtk_widget_add_css_class(cache_title, "settings-title");
@@ -444,12 +843,14 @@ static void show_settings_dialog(GsWindow *self) {
     gtk_check_button_set_active(GTK_CHECK_BUTTON(clear_cache_on_exit),
         g_settings_get_boolean(settings, "clear-cache-on-exit"));
     gtk_box_append(GTK_BOX(cache_box), clear_cache_on_exit);
+    settings_register_focusable(self, clear_cache_on_exit);
     g_signal_connect(clear_cache_on_exit, "toggled", G_CALLBACK(on_setting_check_toggled), "clear-cache-on-exit");
 
     GtkWidget *clear_cookies_on_exit = gtk_check_button_new_with_label("Clear cookies on exit");
     gtk_check_button_set_active(GTK_CHECK_BUTTON(clear_cookies_on_exit),
         g_settings_get_boolean(settings, "clear-cookies-on-exit"));
     gtk_box_append(GTK_BOX(cache_box), clear_cookies_on_exit);
+    settings_register_focusable(self, clear_cookies_on_exit);
     g_signal_connect(clear_cookies_on_exit, "toggled", G_CALLBACK(on_setting_check_toggled), "clear-cookies-on-exit");
 
     GtkWidget *cache_actions = gtk_box_new(GTK_ORIENTATION_HORIZONTAL, 8);
@@ -459,12 +860,15 @@ static void show_settings_dialog(GsWindow *self) {
     GtkWidget *clear_cookies_btn = gtk_button_new_with_label("Clear cookies now");
     gtk_box_append(GTK_BOX(cache_actions), clear_cache_btn);
     gtk_box_append(GTK_BOX(cache_actions), clear_cookies_btn);
+    settings_register_focusable(self, clear_cache_btn);
+    settings_register_focusable(self, clear_cookies_btn);
     g_signal_connect(clear_cache_btn, "clicked", G_CALLBACK(on_clear_cache_clicked), self);
     g_signal_connect(clear_cookies_btn, "clicked", G_CALLBACK(on_clear_cookies_clicked), self);
 
     GtkWidget *close_btn = gtk_button_new_with_label("Close");
     gtk_widget_set_halign(close_btn, GTK_ALIGN_END);
     gtk_box_append(GTK_BOX(box), close_btn);
+    settings_register_focusable(self, close_btn);
     g_signal_connect_swapped(close_btn, "clicked", G_CALLBACK(gtk_window_destroy), dialog);
 
     gtk_window_present(GTK_WINDOW(dialog));
@@ -473,6 +877,11 @@ static void show_settings_dialog(GsWindow *self) {
 static void on_settings_clicked(GtkButton *button, GsWindow *self) {
     (void)button;
     show_settings_dialog(self);
+}
+
+static void on_address_clicked(GtkButton *button, GsWindow *self) {
+    (void)button;
+    open_keyboard_for_url(self);
 }
 
 static void on_cache_cleared(GObject *source_object, GAsyncResult *result, gpointer user_data) {
@@ -527,11 +936,13 @@ static void gs_window_init(GsWindow *self) {
     GtkWidget *back_btn = gtk_button_new_from_icon_name("go-previous-symbolic");
     GtkWidget *fwd_btn = gtk_button_new_from_icon_name("go-next-symbolic");
     GtkWidget *refresh_btn = gtk_button_new_from_icon_name("view-refresh-symbolic");
+    GtkWidget *address_btn = gtk_button_new_from_icon_name("edit-find-symbolic");
     GtkWidget *settings_btn = gtk_button_new_from_icon_name("preferences-system-symbolic");
     
     g_signal_connect(back_btn, "clicked", G_CALLBACK(on_back_clicked), self);
     g_signal_connect(fwd_btn, "clicked", G_CALLBACK(on_forward_clicked), self);
     g_signal_connect(refresh_btn, "clicked", G_CALLBACK(on_reload_clicked), self);
+    g_signal_connect(address_btn, "clicked", G_CALLBACK(on_address_clicked), self);
     g_signal_connect(settings_btn, "clicked", G_CALLBACK(on_settings_clicked), self);
     
     gtk_box_append(GTK_BOX(self->header), back_btn);
@@ -544,9 +955,10 @@ static void gs_window_init(GsWindow *self) {
     gtk_widget_set_hexpand(self->url_entry, TRUE);
     g_signal_connect(self->url_entry, "activate", G_CALLBACK(on_url_activate), self);
     gtk_box_append(GTK_BOX(self->header), self->url_entry);
+    gtk_box_append(GTK_BOX(self->header), address_btn);
     gtk_box_append(GTK_BOX(self->header), settings_btn);
 
-    self->hint_label = gtk_label_new("A click  B back  L/R history  Start page keyboard  L3 address  Select settings");
+    self->hint_label = gtk_label_new("A click  B back  L1/R1 history  Left stick pointer/focus  Right stick scroll  LT/RT zoom  Start keyboard  Guide/search address");
     gtk_widget_add_css_class(self->hint_label, "control-hints");
     gtk_widget_set_halign(self->hint_label, GTK_ALIGN_FILL);
     gtk_box_append(GTK_BOX(box), self->hint_label);
@@ -568,6 +980,14 @@ static void gs_window_init(GsWindow *self) {
     gtk_overlay_add_overlay(GTK_OVERLAY(self->overlay), GTK_WIDGET(self->keyboard));
     gs_virtual_keyboard_v2_connect_key_pressed(self->keyboard, on_keyboard_key_pressed, self);
     gs_virtual_keyboard_v2_connect_closed(self->keyboard, on_keyboard_closed, self);
+
+    self->virtual_cursor = gtk_label_new("");
+    gtk_widget_add_css_class(self->virtual_cursor, "virtual-cursor");
+    gtk_widget_set_halign(self->virtual_cursor, GTK_ALIGN_START);
+    gtk_widget_set_valign(self->virtual_cursor, GTK_ALIGN_START);
+    gtk_widget_set_can_target(self->virtual_cursor, FALSE);
+    gtk_widget_set_visible(self->virtual_cursor, FALSE);
+    gtk_overlay_add_overlay(GTK_OVERLAY(self->overlay), self->virtual_cursor);
     
     // Инициализация менеджеров
     self->cursor = gs_cursor_controller_new(GTK_WINDOW(self));
@@ -585,18 +1005,29 @@ static void gs_window_init(GsWindow *self) {
     gs_gamepad_manager_set_config(self->gamepad, &config);
     gs_cache_manager_set_cookie_policy(self->cache_manager,
         (GsCookiePolicy)g_settings_get_int(settings, "cookie-policy"));
+    self->show_control_hints = g_settings_get_boolean(settings, "show-control-hints");
+    self->use_internal_cursor = g_settings_get_boolean(settings, "use-internal-cursor");
+    self->control_scheme = g_settings_get_int(settings, "control-scheme");
     apply_keyboard_settings(self);
     
     // Подключаем обработчики
     gs_gamepad_manager_connect_button_press(self->gamepad, on_gamepad_button, self);
     gs_gamepad_manager_connect_axis_motion(self->gamepad, on_gamepad_axis, self);
+    gs_gamepad_manager_connect_extended_axis_motion(self->gamepad, on_gamepad_extended_axis, self);
     gs_gamepad_manager_start(self->gamepad);
     
     self->cursor_mode = TRUE; // По умолчанию режим курсора
     self->keyboard_visible = FALSE;
     self->keyboard_targets_url = FALSE;
     self->chrome_visible = TRUE;
+    self->virtual_cursor_x = 640.0;
+    self->virtual_cursor_y = 360.0;
+    self->left_trigger_pressed = FALSE;
+    self->right_trigger_pressed = FALSE;
     self->last_axis_nav_time = 0;
+    self->last_zoom_time = 0;
+    apply_hint_visibility(self);
+    update_virtual_cursor(self);
     g_signal_connect(self, "close-request", G_CALLBACK(on_close_request), self);
     
     // Загрузка стартовой страницы

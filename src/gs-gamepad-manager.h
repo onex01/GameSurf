@@ -34,6 +34,8 @@ void gs_gamepad_manager_connect_button_press(GsGamepadManager *self,
     void (*callback)(SDL_GameControllerButton btn, gpointer data), gpointer data);
 void gs_gamepad_manager_connect_axis_motion(GsGamepadManager *self,
     void (*callback)(float x, float y, gpointer data), gpointer data);
+void gs_gamepad_manager_connect_extended_axis_motion(GsGamepadManager *self,
+    void (*callback)(float lx, float ly, float rx, float ry, float lt, float rt, gpointer data), gpointer data);
 
 G_END_DECLS
 
