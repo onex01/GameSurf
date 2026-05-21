@@ -1,0 +1,62 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<<schemalist>
+  <schema id="com.gamesurf.Gamesurf" path="/com/gamesurf/Gamesurf/">
+    
+    <key name="cursor-sensitivity" type="d">
+      <default>1.5</default>
+      <range min="0.1" max="5.0"/>
+      <summary>Cursor sensitivity</summary>
+      <description>Multiplier for analog stick to cursor movement</description>
+    </key>
+    
+    <key name="stick-deadzone" type="d">
+      <default>0.15</default>
+      <range min="0.0" max="0.5"/>
+      <summary>Analog stick deadzone</summary>
+      <description>Minimum stick deflection to register movement</description>
+    </key>
+    
+    <key name="cursor-speed" type="i">
+      <default>1</default>
+      <summary>Cursor speed mode</summary>
+      <description>0=slow, 1=normal, 2=fast</description>
+    </key>
+    
+    <key name="invert-y-axis" type="b">
+      <default>false</default>
+      <summary>Invert Y axis</summary>
+    </key>
+    
+    <key name="haptic-feedback" type="b">
+      <default>true</default>
+      <summary>Enable haptic feedback</summary>
+    </key>
+    
+    <key name="homepage" type="s">
+      <default>"https://duckduckgo.com"</default>
+      <summary>Homepage URL</summary>
+    </key>
+    
+    <key name="search-engine" type="s">
+      <default>"https://duckduckgo.com/?q=%s"</default>
+      <summary>Search engine URL template</summary>
+    </key>
+    
+    <key name="enable-adblock" type="b">
+      <default>true</default>
+      <summary>Enable ad blocking</summary>
+    </key>
+    
+    <key name="video-autoplay" type="b">
+      <default>false</default>
+      <summary>Allow video autoplay</summary>
+    </key>
+    
+    <key name="keyboard-layouts" type="as">
+      <default>["auto"]</default>
+      <summary>Active keyboard layouts</summary>
+      <description>"auto" uses system locale + en</description>
+    </key>
+    
+  </schema>
+</schemalist>

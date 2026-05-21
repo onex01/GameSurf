@@ -1,0 +1,51 @@
+/* GameSurf Styles */
+.virtual-keyboard {
+    background: rgba(30, 30, 30, 0.95);
+    border-top: 2px solid #4a90d9;
+    padding: 8px;
+}
+
+.keyboard-key {
+    background: #3a3a3a;
+    color: white;
+    border-radius: 4px;
+    font-size: 14px;
+    font-weight: bold;
+    min-width: 32px;
+    min-height: 32px;
+}
+
+.keyboard-key:hover {
+    background: #4a90d9;
+}
+
+.keyboard-key:focus {
+    background: #5aa0e9;
+    outline: 2px solid white;
+}
+
+.keyboard-special {
+    background: #2a2a2a;
+    color: #aaa;
+    border-radius: 4px;
+    font-size: 12px;
+}
+
+.keyboard-special:hover {
+    background: #3a3a3a;
+}
+
+.header-bar {
+    background: #1e1e1e;
+    padding: 4px 8px;
+    border-bottom: 1px solid #333;
+}
+
+/* Индикатор режима курсора */
+.cursor-mode-indicator {
+    background: #4a90d9;
+    color: white;
+    border-radius: 12px;
+    padding: 2px 8px;
+    font-size: 11px;
+}
