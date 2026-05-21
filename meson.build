@@ -1,9 +1,10 @@
 project('gamesurf', 'c',
-  version: '0.1.0',
+  version: '0.2.0',
   license: 'GPL-3.0',
   default_options: [
     'warning_level=2',
     'c_std=gnu11',
+    'buildtype=release',
   ],
 )
 
@@ -18,17 +19,15 @@ x11_dep = dependency('x11', required: false)
 libinput_dep = dependency('libinput', required: false)
 gsound_dep = dependency('gsound', required: false)
 gstreamer_dep = dependency('gstreamer-1.0', required: false)
-m_dep = cc.find_library('m', required: true)
+soup_dep = dependency('libsoup-3.0')  # для cookie/cache
 
 # Configuration
 config_data = configuration_data()
-# Используем set_quoted для текстовых строк, чтобы они обернулись в ""
 config_data.set_quoted('VERSION', meson.project_version())
 config_data.set_quoted('PACKAGE_NAME', 'gamesurf')
 config_data.set_quoted('GETTEXT_PACKAGE', 'gamesurf')
 config_data.set_quoted('LOCALEDIR', get_option('prefix') / get_option('localedir'))
 
-# Check for X11 or Wayland
 if xtst_dep.found() and x11_dep.found()
   config_data.set('HAVE_X11', 1)
 elif libinput_dep.found()
@@ -40,10 +39,8 @@ configure_file(
   configuration: config_data,
 )
 
-# Include directories
 inc = include_directories('src', '.')
 
-# Sources
 sources = files(
   'src/main.c',
   'src/gs-application.c',
@@ -51,42 +48,29 @@ sources = files(
   'src/gs-web-view.c',
   'src/gs-gamepad-manager.c',
   'src/gs-cursor-controller.c',
-  'src/gs-virtual-keyboard.c',
+  'src/gs-virtual-keyboard-v2.c',  # используем v2
   'src/gs-video-controller.c',
   'src/gs-settings.c',
   'src/gs-utils.c',
+  'src/gs-cache-manager.c',
+  'src/gs-tab-manager.c',
+  'src/gs-gamepad-input.c',
 )
 
-# Executable
 executable('gamesurf',
   sources,
   include_directories: inc,
   dependencies: [
-    gtk_dep,
-    webkit_dep,
-    sdl2_dep,
-    xtst_dep,
-    x11_dep,
-    libinput_dep,
-    gsound_dep,
-    gstreamer_dep,
-    m_dep,
+    gtk_dep, webkit_dep, sdl2_dep, xtst_dep, x11_dep,
+    libinput_dep, gsound_dep, gstreamer_dep, soup_dep,
+    cc.find_library('m', required: true),
   ],
   install: true,
 )
 
-# Data files
-install_data('data/gamesurf.desktop',
-  install_dir: get_option('datadir') / 'applications'
-)
+# Data
+install_data('data/gamesurf.desktop', install_dir: get_option('datadir') / 'applications')
+install_data('data/gamesurf.gschema.xml', install_dir: get_option('datadir') / 'glib-2.0' / 'schemas')
+install_data('data/style.css', install_dir: get_option('datadir') / 'gamesurf')
 
-install_data('data/gamesurf.gschema.xml',
-  install_dir: get_option('datadir') / 'glib-2.0' / 'schemas'
-)
-
-install_data('data/style.css',
-  install_dir: get_option('datadir') / 'gamesurf'
-)
-
-# Post-install script
 meson.add_install_script('sh', '-c', 'glib-compile-schemas $MESON_INSTALL_DESTDIR_PREFIX/share/glib-2.0/schemas')

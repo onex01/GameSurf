@@ -1,9 +1,10 @@
-/* gs-window.h */
 #ifndef GS_WINDOW_H
 #define GS_WINDOW_H
 
 #include <gtk/gtk.h>
 #include "gs-application.h"
+#include "gs-web-view.h"
+#include "gs-virtual-keyboard-v2.h"
 
 G_BEGIN_DECLS
 

@@ -7,6 +7,7 @@
 #include "gs-cache-manager.h"
 #include "gs-settings.h"
 #include "gs-utils.h"
+#include <webkit/webkit.h>
 #include <SDL2/SDL.h>
 #include <math.h>
 
@@ -18,6 +19,7 @@ struct _GsWindow {
     GtkWidget *url_entry;
     GtkWidget *stack;
     GtkWidget *overlay;
+    GtkWidget *web_view;
     GtkWidget *menu_overlay;
     GtkWidget *status_label;
 
@@ -54,77 +56,30 @@ static void on_gamepad_button(SDL_GameControllerButton btn, gpointer user_data) 
                 gs_web_view_gamepad_activate(GS_WEB_VIEW(self->web_view));
             }
             break;
-            
+
         case SDL_CONTROLLER_BUTTON_B:
-            // Назад / Отмена
-            webkit_web_view_go_back(WEBKIT_WEB_VIEW(self->web_view));
-            break;
-            
-        case SDL_CONTROLLER_BUTTON_X:
-            // Переключение режима курсор/навигация
-            self->cursor_mode = !self->cursor_mode;
-            // Визуальный индикатор
-            break;
-            
-        case SDL_CONTROLLER_BUTTON_Y:
-            // Обновить страницу
-            webkit_web_view_reload(WEBKIT_WEB_VIEW(self->web_view));
-            break;
-            
         case SDL_CONTROLLER_BUTTON_LEFTSHOULDER:
-            // Предыдущая вкладка/история назад
             webkit_web_view_go_back(WEBKIT_WEB_VIEW(self->web_view));
             break;
-            
+
         case SDL_CONTROLLER_BUTTON_RIGHTSHOULDER:
-            // Вперёд
             webkit_web_view_go_forward(WEBKIT_WEB_VIEW(self->web_view));
             break;
-            
+
+        case SDL_CONTROLLER_BUTTON_Y:
+            webkit_web_view_reload(WEBKIT_WEB_VIEW(self->web_view));
+            break;
+
         case SDL_CONTROLLER_BUTTON_START:
-            // Показать/скрыть клавиатуру
             self->keyboard_visible = !self->keyboard_visible;
             if (self->keyboard_visible) {
-                gs_virtual_keyboard_show(GS_VIRTUAL_KEYBOARD(self->keyboard));
-                gs_virtual_keyboard_set_target(GS_VIRTUAL_KEYBOARD(self->keyboard), self->url_entry);
+                gs_virtual_keyboard_v2_show(self->keyboard);
+                gs_virtual_keyboard_v2_set_target(self->keyboard, GTK_WIDGET(self->url_entry));
             } else {
-                gs_virtual_keyboard_hide(GS_VIRTUAL_KEYBOARD(self->keyboard));
+                gs_virtual_keyboard_v2_hide(self->keyboard);
             }
             break;
-            
-        case SDL_CONTROLLER_BUTTON_BACK:
-            // Меню настроек
-            break;
-            
-        case SDL_CONTROLLER_BUTTON_DPAD_UP:
-            if (!self->cursor_mode) {
-                gs_web_view_gamepad_navigate(GS_WEB_VIEW(self->web_view), 0, -1);
-            }
-            break;
-            
-        case SDL_CONTROLLER_BUTTON_DPAD_DOWN:
-            if (!self->cursor_mode) {
-                gs_web_view_gamepad_navigate(GS_WEB_VIEW(self->web_view), 0, 1);
-            }
-            break;
-            
-        case SDL_CONTROLLER_BUTTON_DPAD_LEFT:
-            if (!self->cursor_mode) {
-                gs_web_view_gamepad_navigate(GS_WEB_VIEW(self->web_view), -1, 0);
-            }
-            break;
-            
-        case SDL_CONTROLLER_BUTTON_DPAD_RIGHT:
-            if (!self->cursor_mode) {
-                gs_web_view_gamepad_navigate(GS_WEB_VIEW(self->web_view), 1, 0);
-            }
-            break;
-            
-        case SDL_CONTROLLER_BUTTON_LEFTSTICK:
-        case SDL_CONTROLLER_BUTTON_RIGHTSTICK:
-            // Клик стиков - дополнительные функции
-            break;
-            
+
         default:
             break;
     }
@@ -211,12 +166,12 @@ static void gs_window_init(GsWindow *self) {
     g_signal_connect(self->web_view, "load-changed", G_CALLBACK(on_load_changed), self);
     gtk_box_append(GTK_BOX(box), self->web_view);
     
-    // Виртуальная клавиатура (скрыта по умолчанию)
-    self->keyboard = GTK_WIDGET(gs_virtual_keyboard_new());
-    gtk_widget_set_visible(self->keyboard, FALSE);
-    gtk_widget_set_valign(self->keyboard, GTK_ALIGN_END);
-    gtk_widget_set_halign(self->keyboard, GTK_ALIGN_FILL);
-    gtk_overlay_add_overlay(GTK_OVERLAY(self->overlay), self->keyboard);
+    /* Виртуальная клавиатура v2 */
+    self->keyboard = gs_virtual_keyboard_v2_new();
+    gtk_widget_set_visible(GTK_WIDGET(self->keyboard), FALSE);
+    gtk_widget_set_valign(GTK_WIDGET(self->keyboard), GTK_ALIGN_END);
+    gtk_widget_set_halign(GTK_WIDGET(self->keyboard), GTK_ALIGN_FILL);
+    gtk_overlay_add_overlay(GTK_OVERLAY(self->overlay), GTK_WIDGET(self->keyboard));
     
     // Инициализация менеджеров
     self->cursor = gs_cursor_controller_new(GTK_WINDOW(self));
@@ -246,7 +201,7 @@ static void gs_window_init(GsWindow *self) {
 }
 
 GsWindow *gs_window_new(GsApplication *app) {
-    return g_object_new(GS_TYPE_WINDOW,
-        "application", app,
-        NULL);
+    return g_object_new(GS_TYPE_WINDOW, "application", app, NULL);
 }
+
+static void gs_window_class_init(GsWindowClass *class) {}

@@ -6,8 +6,6 @@
 #include <X11/extensions/XTest.h>
 #include <gdk/x11/gdkx.h>
 #include <X11/Xlib.h>
-#elif defined(HAVE_WAYLAND)
-#include <libinput.h>
 #endif
 
 struct _GsCursorController {
@@ -34,7 +32,7 @@ static void gs_cursor_controller_init(GsCursorController *self) {
     
 #if defined(HAVE_X11)
     if (display && GDK_IS_X11_DISPLAY(display)) {
-        self->x_display = GDK_DISPLAY_XDISPLAY(display);
+        self->x_display = gdk_x11_display_get_xdisplay(display);
         if (self->x_display) {
             Window root, child;
             int root_x, root_y, win_x, win_y;
@@ -45,14 +43,12 @@ static void gs_cursor_controller_init(GsCursorController *self) {
             self->current_y = root_y;
         }
     }
-#elif defined(HAVE_WAYLAND)
-    // Опционально: обработка Wayland окружения
 #endif
 }
 
 GsCursorController *gs_cursor_controller_new(GtkWindow *window) {
     GsCursorController *self = g_object_new(GS_TYPE_CURSOR_CONTROLLER, NULL);
-    self->window = window;
+    self->window = g_object_ref(window);
     return self;
 }
 
@@ -96,7 +92,7 @@ void gs_cursor_controller_right_click(GsCursorController *self) {
 void gs_cursor_controller_scroll(GsCursorController *self, int direction) {
 #if defined(HAVE_X11)
     if (self->x_display) {
-        int button = (direction < 0) ? 4 : 5; // 4 = scroll up, 5 = scroll down
+        int button = (direction < 0) ? 4 : 5;
         XTestFakeButtonEvent(self->x_display, button, True, CurrentTime);
         XTestFakeButtonEvent(self->x_display, button, False, CurrentTime);
         XFlush(self->x_display);

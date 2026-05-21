@@ -3,7 +3,7 @@
 #define GS_CACHE_MANAGER_H
 
 #include <gtk/gtk.h>
-#include <webkit2/webkit2.h>
+#include <webkit/webkit.h>   /* WebKitGTK 6.0 */
 
 G_BEGIN_DECLS
 
@@ -18,26 +18,24 @@ typedef enum {
 } GsClearDataFlags;
 
 typedef enum {
-    GS_COOKIE_POLICY_NEVER,      // Don't store cookies
-    GS_COOKIE_POLICY_ALWAYS,     // Always store cookies
-    GS_COOKIE_POLICY_CURRENT,    // Store only for current session
+    GS_COOKIE_POLICY_NEVER,
+    GS_COOKIE_POLICY_ALWAYS,
+    GS_COOKIE_POLICY_CURRENT,
 } GsCookiePolicy;
 
 GsCacheManager *gs_cache_manager_new(WebKitWebContext *context);
 
-/* Async operations */
 void gs_cache_manager_clear_data_async(GsCacheManager *self,
     GsClearDataFlags flags,
     GAsyncReadyCallback callback,
     gpointer user_data);
+
 gboolean gs_cache_manager_clear_data_finish(GsCacheManager *self,
     GAsyncResult *result, GError **error);
 
-/* Information */
 guint64 gs_cache_manager_get_cache_size(GsCacheManager *self);
 guint64 gs_cache_manager_get_cookies_count(GsCacheManager *self);
 
-/* Cookie policy */
 void gs_cache_manager_set_cookie_policy(GsCacheManager *self, GsCookiePolicy policy);
 GsCookiePolicy gs_cache_manager_get_cookie_policy(GsCacheManager *self);
 

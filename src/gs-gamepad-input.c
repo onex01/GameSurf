@@ -5,25 +5,19 @@
 
 struct _GsGamepadInput {
     GObject parent_instance;
-    
     SDL_GameController *controller;
     gboolean is_running;
-    GSource *event_source;
+    guint event_source;           /* guint, а не GSource* */
     
-    /* Button callbacks */
-    GHashTable *button_callbacks;  /* GsGamepadButton -> callback */
+    GHashTable *button_callbacks;
+    GHashTable *gesture_callbacks;
     
-    /* Gesture callbacks */
-    GHashTable *gesture_callbacks; /* GsGamepadGesture -> callback */
-    
-    /* Analog callbacks */
     void (*analog_callback)(float x, float y, gpointer data);
     gpointer analog_data;
     
     void (*triggers_callback)(float lt, float rt, gpointer data);
     gpointer triggers_data;
     
-    /* Trigger tracking for gestures */
     float last_lt;
     float last_rt;
 };
@@ -31,7 +25,6 @@ struct _GsGamepadInput {
 G_DEFINE_TYPE(GsGamepadInput, gs_gamepad_input, G_TYPE_OBJECT)
 
 static void gs_gamepad_input_class_init(GsGamepadInputClass *class) {}
-
 static void gs_gamepad_input_init(GsGamepadInput *self) {
     self->controller = NULL;
     self->is_running = FALSE;
@@ -42,14 +35,10 @@ static void gs_gamepad_input_init(GsGamepadInput *self) {
     
     SDL_Init(SDL_INIT_GAMECONTROLLER | SDL_INIT_EVENTS);
     
-    /* Open first available controller */
     for (int i = 0; i < SDL_NumJoysticks(); i++) {
         if (SDL_IsGameController(i)) {
             self->controller = SDL_GameControllerOpen(i);
-            if (self->controller) {
-                g_debug("Gamepad opened: %s", SDL_GameControllerName(self->controller));
-                break;
-            }
+            if (self->controller) break;
         }
     }
 }
@@ -171,12 +160,10 @@ static gboolean gs_gamepad_input_process_events(gpointer user_data) {
 
 void gs_gamepad_input_start(GsGamepadInput *self) {
     if (self->is_running) return;
-    
     if (!self->controller) {
         g_warning("No gamepad available");
         return;
     }
-    
     self->is_running = TRUE;
     self->event_source = g_idle_add(gs_gamepad_input_process_events, self);
     g_debug("Gamepad input started");
@@ -184,11 +171,10 @@ void gs_gamepad_input_start(GsGamepadInput *self) {
 
 void gs_gamepad_input_stop(GsGamepadInput *self) {
     if (!self->is_running) return;
-    
     self->is_running = FALSE;
     if (self->event_source) {
         g_source_remove(self->event_source);
-        self->event_source = NULL;
+        self->event_source = 0;
     }
 }
 
