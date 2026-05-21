@@ -7,6 +7,8 @@ project('gamesurf', 'c',
   ],
 )
 
+cc = meson.get_compiler('c')
+
 # Dependencies
 gtk_dep = dependency('gtk4', version: '>= 4.6')
 webkit_dep = dependency('webkitgtk-6.0', version: '>= 2.40')
@@ -16,13 +18,15 @@ x11_dep = dependency('x11', required: false)
 libinput_dep = dependency('libinput', required: false)
 gsound_dep = dependency('gsound', required: false)
 gstreamer_dep = dependency('gstreamer-1.0', required: false)
+m_dep = cc.find_library('m', required: true)
 
 # Configuration
 config_data = configuration_data()
-config_data.set('VERSION', meson.project_version())
-config_data.set('PACKAGE_NAME', 'gamesurf')
-config_data.set('GETTEXT_PACKAGE', 'gamesurf')
-config_data.set('LOCALEDIR', get_option('prefix') / get_option('localedir'))
+# Используем set_quoted для текстовых строк, чтобы они обернулись в ""
+config_data.set_quoted('VERSION', meson.project_version())
+config_data.set_quoted('PACKAGE_NAME', 'gamesurf')
+config_data.set_quoted('GETTEXT_PACKAGE', 'gamesurf')
+config_data.set_quoted('LOCALEDIR', get_option('prefix') / get_option('localedir'))
 
 # Check for X11 or Wayland
 if xtst_dep.found() and x11_dep.found()
@@ -66,6 +70,7 @@ executable('gamesurf',
     libinput_dep,
     gsound_dep,
     gstreamer_dep,
+    m_dep,
   ],
   install: true,
 )
@@ -77,6 +82,10 @@ install_data('data/gamesurf.desktop',
 
 install_data('data/gamesurf.gschema.xml',
   install_dir: get_option('datadir') / 'glib-2.0' / 'schemas'
+)
+
+install_data('data/style.css',
+  install_dir: get_option('datadir') / 'gamesurf'
 )
 
 # Post-install script

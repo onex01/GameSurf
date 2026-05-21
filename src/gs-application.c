@@ -1,5 +1,6 @@
 /* gs-application.c */
 #include "config.h"
+#include <glib/gi18n.h>
 #include "gs-application.h"
 #include "gs-window.h"
 #include "gs-settings.h"
@@ -45,12 +46,11 @@ static void gs_application_class_init(GsApplicationClass *class) {
 
 static void gs_application_init(GsApplication *self) {
     self->settings = gs_settings_get_default();
-    g_set_application_name("GameSurf");
 }
 
 GsApplication *gs_application_new(void) {
     return g_object_new(GS_TYPE_APPLICATION,
-        "application-id", "com.gamesurf.Gamesurf",
-        "flags", G_APPLICATION_HANDLES_OPEN,
+        "application-id", "org.orionos.gamesurf",
+        "flags", G_APPLICATION_DEFAULT_FLAGS,
         NULL);
 }

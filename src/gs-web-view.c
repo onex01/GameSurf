@@ -11,25 +11,34 @@ G_DEFINE_TYPE(GsWebView, gs_web_view, WEBKIT_TYPE_WEB_VIEW)
 static void gs_web_view_class_init(GsWebViewClass *class) {}
 
 static void gs_web_view_init(GsWebView *self) {
-    WebKitSettings *settings = webkit_web_view_get_settings(WEBKIT_WEB_VIEW(self));
-    webkit_settings_set_enable_javascript(settings, TRUE);
-    webkit_settings_set_enable_media_stream(settings, TRUE);
-    webkit_settings_set_enable_mediasource(settings, TRUE);
-    webkit_settings_set_enable_webaudio(settings, TRUE);
-    webkit_settings_set_enable_webgl(settings, TRUE);
-    webkit_settings_set_enable_html5_database(settings, TRUE);
-    webkit_settings_set_enable_html5_local_storage(settings, TRUE);
-    
-    // Политика cookie - принимать для авторизации
-    WebKitNetworkSession *session = webkit_web_view_get_network_session(WEBKIT_WEB_VIEW(self));
-    WebKitCookieManager *cookies = webkit_network_session_get_cookie_manager(session);
-    webkit_cookie_manager_set_accept_policy(cookies, WEBKIT_COOKIE_POLICY_ACCEPT_ALWAYS);
-    
     self->video_mode = FALSE;
 }
 
 GsWebView *gs_web_view_new(void) {
-    return g_object_new(GS_TYPE_WEB_VIEW, NULL);
+    GsWebView *web_view = g_object_new(GS_TYPE_WEB_VIEW, NULL);
+    
+    // Инициализируем WebKit settings после создания WebView
+    WebKitSettings *settings = webkit_web_view_get_settings(WEBKIT_WEB_VIEW(web_view));
+    if (settings) {
+        webkit_settings_set_enable_javascript(settings, TRUE);
+        webkit_settings_set_enable_media_stream(settings, TRUE);
+        webkit_settings_set_enable_mediasource(settings, TRUE);
+        webkit_settings_set_enable_webaudio(settings, TRUE);
+        webkit_settings_set_enable_webgl(settings, TRUE);
+        webkit_settings_set_enable_html5_database(settings, TRUE);
+        webkit_settings_set_enable_html5_local_storage(settings, TRUE);
+    }
+    
+    // Политика cookie - принимать для авторизации
+    WebKitNetworkSession *session = webkit_web_view_get_network_session(WEBKIT_WEB_VIEW(web_view));
+    if (session) {
+        WebKitCookieManager *cookies = webkit_network_session_get_cookie_manager(session);
+        if (cookies) {
+            webkit_cookie_manager_set_accept_policy(cookies, WEBKIT_COOKIE_POLICY_ACCEPT_ALWAYS);
+        }
+    }
+    
+    return web_view;
 }
 
 void gs_web_view_gamepad_navigate(GsWebView *self, int dx, int dy) {

@@ -1,7 +1,6 @@
 <?xml version="1.0" encoding="UTF-8"?>
-<<schemalist>
-  <schema id="com.gamesurf.Gamesurf" path="/com/gamesurf/Gamesurf/">
-    
+<schemalist>
+  <schema id="org.gamesurf.browser" path="/org/gamesurf/browser/">
     <key name="cursor-sensitivity" type="d">
       <default>1.5</default>
       <range min="0.1" max="5.0"/>
@@ -18,8 +17,15 @@
     
     <key name="cursor-speed" type="i">
       <default>1</default>
+      <range min="0" max="2"/>
       <summary>Cursor speed mode</summary>
-      <description>0=slow, 1=normal, 2=fast</description>
+      <description>Cursor speed: 0=slow, 1=normal, 2=fast</description>
+    </key>
+    
+    <key name="keyboard-layout" type="s">
+      <default>'auto'</default>
+      <summary>Virtual keyboard layout</summary>
+      <description>Keyboard layout code or auto to use system locale</description>
     </key>
     
     <key name="invert-y-axis" type="b">
@@ -33,12 +39,12 @@
     </key>
     
     <key name="homepage" type="s">
-      <default>"https://duckduckgo.com"</default>
+      <default>'https://duckduckgo.com'</default>
       <summary>Homepage URL</summary>
     </key>
     
     <key name="search-engine" type="s">
-      <default>"https://duckduckgo.com/?q=%s"</default>
+      <default>'https://duckduckgo.com/?q=%s'</default>
       <summary>Search engine URL template</summary>
     </key>
     
@@ -52,11 +58,31 @@
       <summary>Allow video autoplay</summary>
     </key>
     
-    <key name="keyboard-layouts" type="as">
-      <default>["auto"]</default>
-      <summary>Active keyboard layouts</summary>
-      <description>"auto" uses system locale + en</description>
+    <key name="cookie-policy" type="i">
+      <default>1</default>
+      <range min="0" max="2"/>
+      <summary>Cookie policy</summary>
+      <description>0=never, 1=always, 2=session-only</description>
     </key>
-    
+
+    <key name="clear-cache-on-exit" type="b">
+      <default>false</default>
+      <summary>Clear cache on exit</summary>
+    </key>
+
+    <key name="clear-cookies-on-exit" type="b">
+      <default>false</default>
+      <summary>Clear cookies on exit</summary>
+    </key>
+
+    <key name="history-enabled" type="b">
+      <default>true</default>
+      <summary>Save browsing history</summary>
+    </key>
+
+    <key name="bookmarks-enabled" type="b">
+      <default>true</default>
+      <summary>Enable bookmarks</summary>
+    </key>
   </schema>
 </schemalist>

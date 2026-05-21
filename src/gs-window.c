@@ -2,27 +2,41 @@
 #include "gs-web-view.h"
 #include "gs-gamepad-manager.h"
 #include "gs-cursor-controller.h"
-#include "gs-virtual-keyboard.h"
+#include "gs-virtual-keyboard-v2.h"
+#include "gs-tab-manager.h"
+#include "gs-cache-manager.h"
 #include "gs-settings.h"
+#include "gs-utils.h"
 #include <SDL2/SDL.h>
+#include <math.h>
 
 struct _GsWindow {
     GtkApplicationWindow parent_instance;
-    
-    // Виджеты
+
+    /* Виджеты */
     GtkWidget *header;
     GtkWidget *url_entry;
-    GtkWidget *web_view;
-    GtkWidget *keyboard;
+    GtkWidget *stack;
     GtkWidget *overlay;
-    
-    // Менеджеры
+    GtkWidget *menu_overlay;
+    GtkWidget *status_label;
+
+    /* Менеджеры */
     GsGamepadManager *gamepad;
     GsCursorController *cursor;
-    
-    // Состояние
+    GsTabManager *tabs;
+    GsCacheManager *cache_manager;
+    GsVirtualKeyboardV2 *keyboard;
+
+    /* Data */
+    GPtrArray *history;
+    GPtrArray *bookmarks;
+
+    /* Состояние */
     gboolean keyboard_visible;
+    gboolean menu_visible;
     gboolean cursor_mode; // TRUE = эмуляция курсора, FALSE = фокусная навигация
+    gint menu_index;
 };
 
 G_DEFINE_TYPE(GsWindow, gs_window, GTK_TYPE_APPLICATION_WINDOW)
@@ -160,7 +174,7 @@ static void gs_window_init(GsWindow *self) {
     
     // Overlay для размещения клавиатуры поверх веб-вида
     self->overlay = gtk_overlay_new();
-    gtk_application_window_set_content(GTK_APPLICATION_WINDOW(self), self->overlay);
+    gtk_window_set_child(GTK_WINDOW(self), self->overlay);
     
     // Основной контейнер
     GtkWidget *box = gtk_box_new(GTK_ORIENTATION_VERTICAL, 0);
@@ -213,7 +227,7 @@ static void gs_window_init(GsWindow *self) {
     GsGamepadConfig config = {
         .sensitivity = g_settings_get_double(settings, "cursor-sensitivity"),
         .deadzone = g_settings_get_double(settings, "stick-deadzone"),
-        .speed_mode = g_settings_get_enum(settings, "cursor-speed"),
+        .speed_mode = (GsCursorSpeed)g_settings_get_int(settings, "cursor-speed"),
         .invert_y = g_settings_get_boolean(settings, "invert-y-axis"),
         .haptic_feedback = g_settings_get_boolean(settings, "haptic-feedback")
     };
