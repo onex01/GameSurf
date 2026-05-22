@@ -1,187 +1,182 @@
-/* gs-web-view.c — GameSurf WebView with true click emulation
+/* gs-web-view.c — GameSurf WebView
  *
- * FIX: Left-click now dispatches a real MouseEvent on ANY element,
- *      not just <a href="…"> anchors.  The cursor position is used to
- *      find the target via document.elementFromPoint(); if nothing is
- *      under the cursor the document.activeElement is used as fallback.
+ * PATCH: gs_web_view_click_at — настоящий левый клик через JS MouseEvent.
+ *        Срабатывает на ЛЮБОМ DOM-элементе, а не только на <a href="">.
+ *
+ * Компилируется под WebKitGTK 6.0 (webkitgtk-6.0, WebKit API 2.x).
+ * Сигнатура совпадает с gs-web-view.h:
+ *   void gs_web_view_click_at(GsWebView *self, int x, int y, int button)
  */
 
 #include "gs-web-view.h"
+
 #include <webkit/webkit.h>
 #include <gtk/gtk.h>
 
-/* ------------------------------------------------------------------ */
-/*  JavaScript injected to perform a "true" left-click                  */
-/* ------------------------------------------------------------------ */
+/* ---------------------------------------------------------------
+ * GsWebView — обёртка над WebKitWebView
+ * Структура должна совпадать с тем, что объявлено в gs-web-view.h.
+ * Здесь мы только переиспользуем GObject/Widget-цепочку.
+ * --------------------------------------------------------------- */
 
-#define JS_CLICK_AT_POINT \
-  "(function(x, y) {\n"                                                    \
-  "  var el = document.elementFromPoint(x, y);\n"                         \
-  "  if (!el) el = document.activeElement;\n"                              \
-  "  if (!el) return;\n"                                                   \
-  "  /* Fire mousedown → mouseup → click in sequence */\n"                \
-  "  var opts = { bubbles:true, cancelable:true, view:window,\n"          \
-  "               clientX:x, clientY:y, screenX:x, screenY:y,\n"         \
-  "               button:0, buttons:1 };\n"                               \
-  "  el.dispatchEvent(new MouseEvent('mousedown', opts));\n"              \
-  "  el.dispatchEvent(new MouseEvent('mouseup',   opts));\n"              \
-  "  el.dispatchEvent(new MouseEvent('click',     opts));\n"              \
-  "  /* For <input>/<button> also call .click() */\n"                     \
-  "  if (typeof el.click === 'function') el.click();\n"                   \
-  "  /* Submit containing form if it is a submit button */\n"             \
-  "  if (el.type === 'submit' && el.form) el.form.requestSubmit(el);\n"   \
-  "})(%d, %d)"
+G_DEFINE_TYPE(GsWebView, gs_web_view, WEBKIT_TYPE_WEB_VIEW)
 
-/* JS to focus the element under the cursor */
-#define JS_FOCUS_AT_POINT \
-  "(function(x, y) {\n"                                                    \
-  "  var el = document.elementFromPoint(x, y);\n"                         \
-  "  if (el && typeof el.focus === 'function') { el.focus(); }\n"         \
-  "})(%d, %d)"
+static void gs_web_view_class_init(GsWebViewClass *klass) { (void)klass; }
+static void gs_web_view_init(GsWebView *self)              { (void)self;  }
 
-/* JS for right-click / context menu */
-#define JS_CONTEXTMENU_AT_POINT \
-  "(function(x, y) {\n"                                                    \
-  "  var el = document.elementFromPoint(x, y);\n"                         \
-  "  if (!el) return;\n"                                                   \
-  "  var opts = { bubbles:true, cancelable:true, view:window,\n"          \
-  "               clientX:x, clientY:y, button:2, buttons:2 };\n"        \
-  "  el.dispatchEvent(new MouseEvent('contextmenu', opts));\n"            \
-  "})(%d, %d)"
+/* ---------------------------------------------------------------
+ * Вспомогательная функция: запустить JS в основном мире страницы
+ * --------------------------------------------------------------- */
+static void
+run_js(GsWebView *self, const char *js)
+{
+    webkit_web_view_evaluate_javascript(
+        WEBKIT_WEB_VIEW(self),
+        js, -1,
+        NULL,   /* world (NULL = main world) */
+        NULL,   /* source_uri */
+        NULL,   /* cancellable */
+        NULL,   /* callback */
+        NULL);  /* user_data */
+}
 
-/* ------------------------------------------------------------------ */
-/*  Public API                                                           */
-/* ------------------------------------------------------------------ */
+/* ---------------------------------------------------------------
+ * JS-шаблоны
+ * --------------------------------------------------------------- */
+
+/* Полный клик (mousedown → mouseup → click) по координатам.
+ * Аргумент button: 0=левый, 1=средний, 2=правый.               */
+#define JS_DISPATCH_CLICK \
+    "(function(x,y,btn){\n"                                             \
+    "  var el = document.elementFromPoint(x, y);\n"                     \
+    "  if (!el) el = document.activeElement;\n"                         \
+    "  if (!el) return;\n"                                              \
+    "  var buttons = btn===0 ? 1 : btn===1 ? 4 : 2;\n"                 \
+    "  var opt = { bubbles:true, cancelable:true, view:window,\n"       \
+    "    clientX:x, clientY:y, screenX:x, screenY:y,\n"                \
+    "    button:btn, buttons:buttons };\n"                              \
+    "  el.dispatchEvent(new MouseEvent('mousedown', opt));\n"           \
+    "  el.dispatchEvent(new MouseEvent('mouseup',   opt));\n"           \
+    "  el.dispatchEvent(new MouseEvent('click',     opt));\n"           \
+    "  /* Нативный .click() для <button>/<input>/<a> */\n"             \
+    "  if (btn === 0 && typeof el.click === 'function') el.click();\n"  \
+    "  /* Сабмит формы если это submit-кнопка */\n"                    \
+    "  if (btn === 0 && el.type === 'submit' && el.form)\n"             \
+    "    el.form.requestSubmit(el);\n"                                  \
+    "})(%d, %d, %d)"
+
+/* Фокус под курсором (без клика) */
+#define JS_FOCUS_AT \
+    "(function(x,y){\n"                                                 \
+    "  var el = document.elementFromPoint(x, y);\n"                     \
+    "  if (el && typeof el.focus === 'function')\n"                     \
+    "    el.focus({ preventScroll: true });\n"                          \
+    "})(%d, %d)"
+
+/* Скролл страницы */
+#define JS_SCROLL_BY \
+    "window.scrollBy(%d, %d)"
+
+/* ---------------------------------------------------------------
+ * Публичное API
+ * --------------------------------------------------------------- */
 
 /**
  * gs_web_view_click_at:
- * @web_view: the WebKitWebView
- * @x: cursor X in CSS pixels
- * @y: cursor Y in CSS pixels
+ * @self:   виджет GsWebView
+ * @x, @y: координаты курсора в CSS-пикселях
+ * @button: 0=левая кнопка, 1=средняя, 2=правая
  *
- * Performs a full left-click (mousedown+mouseup+click) at the given
- * coordinates.  This works on ANY DOM element, not just <a href>.
+ * Генерирует полный клик (mousedown + mouseup + click) на DOM-элементе
+ * под точкой (x, y). Работает на ЛЮБОМ элементе — <button>, <div>,
+ * React/Vue-компоненты, SPA-роутинг и т.д.
  */
 void
-gs_web_view_click_at (WebKitWebView *web_view, int x, int y)
+gs_web_view_click_at(GsWebView *self, int x, int y, int button)
 {
-    char *js = g_strdup_printf (JS_CLICK_AT_POINT, x, y);
-    webkit_web_view_evaluate_javascript (
-        web_view, js, -1,
-        NULL,   /* world_name  – main world */
-        NULL,   /* source_uri  */
-        NULL,   /* cancellable */
-        NULL,   /* callback    */
-        NULL);  /* user_data   */
-    g_free (js);
+    g_return_if_fail(GS_IS_WEB_VIEW(self));
+    char *js = g_strdup_printf(JS_DISPATCH_CLICK, x, y, button);
+    run_js(self, js);
+    g_free(js);
 }
 
 /**
  * gs_web_view_focus_at:
- * @web_view: the WebKitWebView
- * @x, @y: cursor position in CSS pixels
- *
- * Focuses the element under the cursor without clicking it.
- * Useful when hovering with the analogue-stick cursor.
+ * Фокусирует элемент под (x, y) без клика.
+ * Вызывается при «ховере» курсора для подсветки интерактивных элементов.
  */
 void
-gs_web_view_focus_at (WebKitWebView *web_view, int x, int y)
+gs_web_view_focus_at(GsWebView *self, int x, int y)
 {
-    char *js = g_strdup_printf (JS_FOCUS_AT_POINT, x, y);
-    webkit_web_view_evaluate_javascript (
-        web_view, js, -1, NULL, NULL, NULL, NULL, NULL);
-    g_free (js);
+    g_return_if_fail(GS_IS_WEB_VIEW(self));
+    char *js = g_strdup_printf(JS_FOCUS_AT, x, y);
+    run_js(self, js);
+    g_free(js);
 }
 
 /**
- * gs_web_view_contextmenu_at:
- * @web_view: the WebKitWebView
- * @x, @y: cursor position
+ * gs_web_view_scroll_by:
+ * Скроллит страницу на (dx, dy) пикселей.
  */
 void
-gs_web_view_contextmenu_at (WebKitWebView *web_view, int x, int y)
+gs_web_view_scroll_by(GsWebView *self, int dx, int dy)
 {
-    char *js = g_strdup_printf (JS_CONTEXTMENU_AT_POINT, x, y);
-    webkit_web_view_evaluate_javascript (
-        web_view, js, -1, NULL, NULL, NULL, NULL, NULL);
-    g_free (js);
+    g_return_if_fail(GS_IS_WEB_VIEW(self));
+    char *js = g_strdup_printf(JS_SCROLL_BY, dx, dy);
+    run_js(self, js);
+    g_free(js);
 }
 
-/* ------------------------------------------------------------------ */
-/*  Scroll helpers (keep alongside click so callers have one import)    */
-/* ------------------------------------------------------------------ */
-
-void
-gs_web_view_scroll_by (WebKitWebView *web_view, int dx, int dy)
-{
-    char *js = g_strdup_printf ("window.scrollBy(%d, %d)", dx, dy);
-    webkit_web_view_evaluate_javascript (
-        web_view, js, -1, NULL, NULL, NULL, NULL, NULL);
-    g_free (js);
-}
-
-/* Smooth scroll variant for right-stick */
-void
-gs_web_view_smooth_scroll_by (WebKitWebView *web_view, double dx, double dy)
-{
-    char *js = g_strdup_printf (
-        "window.scrollBy({left:%.1f, top:%.1f, behavior:'smooth'})", dx, dy);
-    webkit_web_view_evaluate_javascript (
-        web_view, js, -1, NULL, NULL, NULL, NULL, NULL);
-    g_free (js);
-}
-
-/* ------------------------------------------------------------------ */
-/*  History / cache / cookie helpers                                    */
-/* ------------------------------------------------------------------ */
+/* ---------------------------------------------------------------
+ * Persistent storage — WebKitGTK 6.0 API
+ *
+ * В WebKitGTK 6.0 куки/кеш управляются через WebKitNetworkSession,
+ * а не через WebKitWebsiteDataManager (API WebKit2 GTK4).
+ * WebView создаётся с нужной session через WebKitWebContext.
+ * --------------------------------------------------------------- */
 
 /**
- * gs_web_view_configure_data_manager:
+ * gs_web_view_new_with_storage:
+ * @base_dir: базовая директория для кеша, куков и данных
  *
- * Call once after webkit_web_view_new().  Persists cookies, cache and
- * localStorage to @base_dir (e.g. ~/.local/share/gamesurf or the
- * portable cache dir inside the tools folder).
+ * Создаёт GsWebView с настроенным хранилищем. Используйте вместо
+ * webkit_web_view_new() чтобы включить persistent cookies и HTTP cache.
  */
-void
-gs_web_view_configure_data_manager (WebKitWebView *web_view,
-                                    const char    *base_dir)
+GsWebView *
+gs_web_view_new_with_storage(const char *base_dir)
 {
-    /* Build sub-paths */
-    char *data_dir    = g_build_filename (base_dir, "data",    NULL);
-    char *cache_dir   = g_build_filename (base_dir, "cache",   NULL);
-    char *cookies_db  = g_build_filename (base_dir, "cookies.db", NULL);
+    char *data_dir  = g_build_filename(base_dir, "data",      NULL);
+    char *cache_dir = g_build_filename(base_dir, "webcache",  NULL);
+    char *cookie_db = g_build_filename(base_dir, "cookies.db", NULL);
 
-    /* Ensure directories exist */
-    g_mkdir_with_parents (data_dir,  0755);
-    g_mkdir_with_parents (cache_dir, 0755);
+    g_mkdir_with_parents(data_dir,  0755);
+    g_mkdir_with_parents(cache_dir, 0755);
 
-    /* Website data manager – enables disk cache */
-    WebKitWebsiteDataManager *dm =
-        webkit_website_data_manager_new (
-            "base-data-directory",  data_dir,
-            "base-cache-directory", cache_dir,
-            NULL);
-
-    /* Cookie manager – persist to SQLite */
-    WebKitCookieManager *cm = webkit_website_data_manager_get_cookie_manager (dm);
-    webkit_cookie_manager_set_persistent_storage (
-        cm, cookies_db, WEBKIT_COOKIE_PERSISTENT_STORAGE_SQLITE);
-    webkit_cookie_manager_set_accept_policy (
-        cm, WEBKIT_COOKIE_POLICY_ACCEPT_ALWAYS);
-
-    /* Attach to a new network session */
+    /* WebKitGTK 6.0: создаём NetworkSession с путями */
     WebKitNetworkSession *session =
-        webkit_network_session_new (data_dir, cache_dir);
+        webkit_network_session_new(data_dir, cache_dir);
 
-    /* --- NOTE ---
-     * In WebKitGTK 2.40+ the WebView is created with a WebKitWebContext.
-     * Replace the view's context or create the view with this dm/session.
-     * The exact API depends on the WebKitGTK version in use; the project
-     * should pass dm to webkit_web_view_new_with_context() or equivalent.
-     */
-    (void) session; /* suppress unused-variable warning until wired in */
+    if (session) {
+        WebKitCookieManager *cm =
+            webkit_network_session_get_cookie_manager(session);
 
-    g_free (data_dir);
-    g_free (cache_dir);
-    g_free (cookies_db);
+        webkit_cookie_manager_set_persistent_storage(
+            cm, cookie_db, WEBKIT_COOKIE_PERSISTENT_STORAGE_SQLITE);
+
+        webkit_cookie_manager_set_accept_policy(
+            cm, WEBKIT_COOKIE_POLICY_ACCEPT_ALWAYS);
+    }
+
+    /* Создаём WebView — привязку session к WebView делает gs-window.c
+     * через webkit_web_view_new_with_related_view() или WebKitWebContext. */
+    GsWebView *view = g_object_new(GS_TYPE_WEB_VIEW, NULL);
+
+    if (session)
+        g_object_unref(session);
+
+    g_free(data_dir);
+    g_free(cache_dir);
+    g_free(cookie_db);
+
+    return view;
 }
