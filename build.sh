@@ -1,19 +1,12 @@
 #!/bin/bash
 set -euo pipefail
 
-# ============================================================
-# GameSurf Master Build Script
-# Builds x86_64, arm64, and armhf into dist/{arch}/
-# Cross-configs are read from config/ directory
-# ============================================================
-
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 PROJECT_DIR="$SCRIPT_DIR"
 BUILD_DIR="$PROJECT_DIR/build"
 DIST_DIR="$PROJECT_DIR/dist"
 CONFIG_DIR="$PROJECT_DIR/config"
 
-# Colors
 RED='\033[0;31m'
 GREEN='\033[0;32m'
 YELLOW='\033[1;33m'
@@ -25,7 +18,6 @@ log_warn()  { echo -e "${YELLOW}[WARN]${NC} $1"; }
 log_error() { echo -e "${RED}[ERROR]${NC} $1"; }
 log_step()  { echo -e "${BLUE}[STEP]${NC} $1"; }
 
-# Check dependencies
 check_deps() {
     local missing=()
     for cmd in meson ninja pkg-config glib-compile-schemas; do
@@ -34,22 +26,60 @@ check_deps() {
         fi
     done
     if [ ${#missing[@]} -ne 0 ]; then
-        log_error "Missing dependencies: ${missing[*]}"
-        echo "Install: sudo apt install meson ninja-build pkg-config libglib2.0-dev-bin"
+        log_error "Missing: ${missing[*]}"
         exit 1
     fi
 }
 
-# Build for a specific architecture
+check_arm_deps() {
+    local arch=$1
+    local pc_dir=""
+    case "$arch" in
+        arm64) pc_dir="/usr/lib/aarch64-linux-gnu/pkgconfig" ;;
+        armhf) pc_dir="/usr/lib/arm-linux-gnueabihf/pkgconfig" ;;
+    esac
+
+    if [ ! -f "$pc_dir/gtk4.pc" ]; then
+        log_error "ARM GTK4 pkgconfig not found: $pc_dir/gtk4.pc"
+        echo "Install ARM dev libs first."
+        return 1
+    fi
+
+    # Test with full PKG_CONFIG_LIBDIR including shared paths
+    local old_pc_libdir="${PKG_CONFIG_LIBDIR:-}"
+    local old_pc_path="${PKG_CONFIG_PATH:-}"
+    export PKG_CONFIG_LIBDIR="$pc_dir:/usr/share/pkgconfig:/usr/lib/pkgconfig"
+    export PKG_CONFIG_PATH=""
+
+    if ! pkg-config --exists gtk4; then
+        log_error "pkg-config cannot find ARM gtk4"
+        export PKG_CONFIG_LIBDIR="$old_pc_libdir"
+        export PKG_CONFIG_PATH="$old_pc_path"
+        return 1
+    fi
+
+    log_info "ARM gtk4 found: $(pkg-config --modversion gtk4)"
+    export PKG_CONFIG_LIBDIR="$old_pc_libdir"
+    export PKG_CONFIG_PATH="$old_pc_path"
+    return 0
+}
+
 build_arch() {
     local arch=$1
     local cross_file=$2
     local build_subdir="$BUILD_DIR/$arch"
     local dist_arch="$DIST_DIR/$arch"
+    local app_dir="$dist_arch/GameSurf"
 
     log_step "Building for $arch..."
 
-    rm -rf "$build_subdir"
+    if [ -n "$cross_file" ]; then
+        if ! check_arm_deps "$arch"; then
+            return 1
+        fi
+    fi
+
+    rm -rf "$build_subdir" "$dist_arch"
     mkdir -p "$build_subdir"
 
     local setup_args=(
@@ -57,61 +87,51 @@ build_arch() {
         --prefix=/usr/local
         -Dstrip=true
     )
+
     if [ -n "$cross_file" ] && [ -f "$cross_file" ]; then
         setup_args+=("--cross-file=$cross_file")
-        log_info "Using cross-file: $cross_file"
     fi
 
     meson setup "$build_subdir" "$PROJECT_DIR" "${setup_args[@]}"
     ninja -C "$build_subdir"
 
-    # Create dist structure
-    mkdir -p "$dist_arch/bin"
-    mkdir -p "$dist_arch/data"
-    mkdir -p "$dist_arch/lib"
-
-    cp "$build_subdir/gamesurf" "$dist_arch/bin/"
-    cp "$PROJECT_DIR/data/style.css" "$dist_arch/data/"
-    cp "$PROJECT_DIR/data/gamesurf.desktop" "$dist_arch/data/"
-    cp "$PROJECT_DIR/data/gamesurf.gschema.xml" "$dist_arch/data/"
+    mkdir -p "$app_dir/bin" "$app_dir/data" "$app_dir/lib"
+    cp "$build_subdir/gamesurf" "$app_dir/bin/"
+    cp "$PROJECT_DIR/data/style.css" "$app_dir/data/"
+    cp "$PROJECT_DIR/data/gamesurf.desktop" "$app_dir/data/"
+    cp "$PROJECT_DIR/data/gamesurf.gschema.xml" "$app_dir/data/"
 
     if command -v glib-compile-schemas &>/dev/null; then
-        glib-compile-schemas "$dist_arch/data/"
+        glib-compile-schemas "$app_dir/data/"
     fi
 
-    # Universal launcher
-    cat > "$dist_arch/GameSurf.sh" << 'LAUNCHER_EOF'
+    cat > "$dist_arch/GameSurf.sh" << LAUNCHER_EOF
 #!/bin/bash
 set -e
-SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
-export GSETTINGS_SCHEMA_DIR="$SCRIPT_DIR/data"
-export GAMESURF_DATA_DIR="$SCRIPT_DIR/data"
+SCRIPT_DIR="$(cd "$(dirname "\${BASH_SOURCE[0]}")" && pwd)"
+export GSETTINGS_SCHEMA_DIR="\$SCRIPT_DIR/GameSurf/data"
+export GAMESURF_DATA_DIR="\$SCRIPT_DIR/GameSurf/data"
 export SDL_GAMECONTROLLER_ALLOW_STEAM_VIRTUAL_GAMEPAD=1
-exec "$SCRIPT_DIR/bin/gamesurf" "$@"
+exec "\$SCRIPT_DIR/GameSurf/bin/gamesurf" "\$@"
 LAUNCHER_EOF
     chmod +x "$dist_arch/GameSurf.sh"
 
-    # PortMaster / ArkOS launcher
-    cat > "$dist_arch/launch.sh" << 'PORTMASTER_EOF'
+    cat > "$dist_arch/launch.sh" << PORTMASTER_EOF
 #!/bin/bash
-# PortMaster / ArkOS / Rocknix launcher
 export SDL_GAMECONTROLLER_ALLOW_STEAM_VIRTUAL_GAMEPAD=1
-export GAMESURF_DATA_DIR="$(dirname "$0")/data"
-export GSETTINGS_SCHEMA_DIR="$(dirname "$0")/data"
+export GAMESURF_DATA_DIR="$(dirname "$0")/GameSurf/data"
+export GSETTINGS_SCHEMA_DIR="$(dirname "$0")/GameSurf/data"
 export SDL_JOYSTICK_HIDAPI=1
-export SDL_HINT_JOYSTICK_HIDAPI_BLUETOOTH=1
-exec "$(dirname "$0")/bin/gamesurf" "$@"
+exec "$(dirname "$0")/GameSurf/bin/gamesurf" "\$@"
 PORTMASTER_EOF
     chmod +x "$dist_arch/launch.sh"
 
-    log_info "$arch build complete → $dist_arch/"
+    log_info "$arch done → $dist_arch/"
 }
 
-# Create tar.xz packages
 create_packages() {
-    log_step "Creating distribution packages..."
+    log_step "Packaging..."
     mkdir -p "$DIST_DIR/packages"
-
     local version
     version="$(grep "version:" "$PROJECT_DIR/meson.build" | head -1 | sed "s/.*version: *'//;s/'.*//")"
     [ -z "$version" ] && version="0.3.0"
@@ -126,33 +146,31 @@ create_packages() {
     done
 }
 
-# Print usage
 usage() {
     cat << EOF
 Usage: $0 [OPTIONS] [ARCH...]
 
-Build GameSurf for specified architectures.
-
 Architectures:
   x86_64    Desktop Linux (default)
-  arm64     ARM64 / AArch64 (RG552, RG505, etc.)
-  armhf     ARM 32-bit hard-float (RG351MP, RG351V, RG353V, etc.)
+  arm64     ARM64 / AArch64
+  armhf     ARM 32-bit hard-float
 
 Options:
   -a, --all       Build all architectures
-  -p, --package   Create tar.xz packages after build
-  -c, --clean     Clean build directories first
-  -h, --help      Show this help
+  -p, --package   Create tar.xz packages
+  -c, --clean     Clean build dirs first
+  -h, --help      Show help
 
 Examples:
-  $0              Build x86_64 only
-  $0 arm64        Build for ARM64
-  $0 -a           Build all architectures
-  $0 -a -p        Build all and create packages
+  $0              Build x86_64
+  $0 arm64        Build ARM64
+  $0 -a -p        Build all + packages
 
-Cross-compiler install:
-  ARM64:  sudo apt install gcc-aarch64-linux-gnu g++-aarch64-linux-gnu
-  ARMHF:  sudo apt install gcc-arm-linux-gnueabihf g++-arm-linux-gnueabihf
+Install missing ARM64 deps:
+  sudo apt install libbz2-dev:arm64 x11proto-dev:arm64 shared-mime-info:arm64
+
+Install missing ARMHF deps:
+  sudo apt install libbz2-dev:armhf x11proto-dev:armhf shared-mime-info:armhf
 EOF
 }
 
@@ -170,7 +188,7 @@ main() {
             x86_64|amd64)   arches+=("x86_64"); shift ;;
             arm64|aarch64)  arches+=("arm64"); shift ;;
             armhf|armv7)    arches+=("armhf"); shift ;;
-            *)              log_error "Unknown option: $1"; usage; exit 1 ;;
+            *)              log_error "Unknown: $1"; usage; exit 1 ;;
         esac
     done
 
@@ -179,27 +197,27 @@ main() {
     check_deps
 
     if [ "$do_clean" = true ]; then
-        log_step "Cleaning..."
         rm -rf "$BUILD_DIR" "$DIST_DIR"
     fi
-
     mkdir -p "$DIST_DIR"
 
+    local failed=()
     for arch in "${arches[@]}"; do
         case $arch in
-            x86_64) build_arch "x86_64" "" ;;
-            arm64)  build_arch "arm64" "$CONFIG_DIR/cross-arm64.txt" ;;
-            armhf)  build_arch "armhf" "$CONFIG_DIR/cross-armhf.txt" ;;
+            x86_64) build_arch "x86_64" "" || failed+=("x86_64") ;;
+            arm64)  build_arch "arm64" "$CONFIG_DIR/cross-arm64.txt" || failed+=("arm64") ;;
+            armhf)  build_arch "armhf" "$CONFIG_DIR/cross-armhf.txt" || failed+=("armhf") ;;
         esac
     done
 
-    if [ "$do_package" = true ]; then
-        create_packages
+    if [ ${#failed[@]} -gt 0 ]; then
+        log_warn "Failed: ${failed[*]}"
     fi
 
+    [ "$do_package" = true ] && create_packages
+
     log_info "Done!"
-    echo ""
-    find "$DIST_DIR" -maxdepth 2 -type d | sort | sed 's/^/  /'
+    find "$DIST_DIR" -maxdepth 3 -type d | sort | sed 's/^/  /'
 }
 
 main "$@"

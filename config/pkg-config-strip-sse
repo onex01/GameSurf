@@ -1,0 +1,5 @@
+#!/usr/bin/env bash
+# pkg-config wrapper for ARM cross-compilation
+# Strips x86-only SSE flags from SDL2 and other libs
+
+/usr/bin/pkg-config "$@" | sed 's/-mfpmath=sse//g; s/-msse2//g; s/-msse//g'

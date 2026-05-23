@@ -1,12 +1,13 @@
-[properties]
-c_args = ['-march=armv8-a', '-mtune=cortex-a53']
-
 [binaries]
 c = 'aarch64-linux-gnu-gcc'
 cpp = 'aarch64-linux-gnu-g++'
 ar = 'aarch64-linux-gnu-ar'
 strip = 'aarch64-linux-gnu-strip'
-pkgconfig = 'pkg-config'
+pkg-config = '/usr/bin/pkg-config'
+
+[properties]
+sys_root = '/usr/aarch64-linux-gnu'
+pkg_config_libdir = '/usr/lib/aarch64-linux-gnu/pkgconfig:/usr/share/pkgconfig:/usr/lib/pkgconfig'
 
 [host_machine]
 system = 'linux'

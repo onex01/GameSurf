@@ -1,12 +1,13 @@
-[properties]
-c_args = ['-march=armv7-a', '-mfpu=neon-vfpv4', '-mfloat-abi=hard']
-
 [binaries]
 c = 'arm-linux-gnueabihf-gcc'
 cpp = 'arm-linux-gnueabihf-g++'
 ar = 'arm-linux-gnueabihf-ar'
 strip = 'arm-linux-gnueabihf-strip'
-pkgconfig = 'pkg-config'
+pkg-config = '/usr/bin/pkg-config'
+
+[properties]
+sys_root = '/usr/arm-linux-gnueabihf'
+pkg_config_libdir = '/usr/lib/arm-linux-gnueabihf/pkgconfig:/usr/share/pkgconfig:/usr/lib/pkgconfig'
 
 [host_machine]
 system = 'linux'

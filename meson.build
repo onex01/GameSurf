@@ -21,6 +21,31 @@ gsound_dep = dependency('gsound', required: false)
 soup_dep = dependency('libsoup-3.0')
 json_dep = dependency('json-glib-1.0')
 
+# Strip x86-only SSE flags from SDL2 for cross-compilation
+sdl2_cflags = sdl2_dep.partial_dependency(compile_args: true).get_compile_args()
+sdl2_ldflags = sdl2_dep.partial_dependency(link_args: true).get_link_args()
+
+filtered_cflags = []
+foreach f : sdl2_cflags
+    if f != '-mfpmath=sse' and f != '-msse' and f != '-msse2'
+        filtered_cflags += f
+    endif
+endforeach
+
+filtered_ldflags = []
+foreach f : sdl2_ldflags
+    if f != '-mfpmath=sse' and f != '-msse' and f != '-msse2'
+        filtered_ldflags += f
+    endif
+endforeach
+
+# Rebuild SDL2 dependency without SSE flags
+sdl2_filtered = declare_dependency(
+    compile_args: filtered_cflags,
+    link_args: filtered_ldflags,
+    dependencies: sdl2_dep.partial_dependency(compile_args: false, link_args: false),
+)
+
 # Configuration
 config_data = configuration_data()
 config_data.set_quoted('VERSION', meson.project_version())
@@ -63,7 +88,7 @@ executable('gamesurf',
     sources,
     include_directories: inc,
     dependencies: [
-        gtk_dep, webkit_dep, sdl2_dep, xtst_dep, x11_dep,
+        gtk_dep, webkit_dep, sdl2_filtered, xtst_dep, x11_dep,
         libinput_dep, gsound_dep, soup_dep, json_dep,
         cc.find_library('m', required: true),
     ],
