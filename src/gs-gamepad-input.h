@@ -64,6 +64,9 @@ void gs_gamepad_input_connect_gesture(GsGamepadInput *self,
     void (*callback)(gpointer data),
     gpointer data);
 
+float gs_gamepad_input_get_axis(GsGamepadInput *self, int axis);
+gboolean gs_gamepad_input_get_button(GsGamepadInput *self, int button);
+
 void gs_gamepad_input_connect_analog(GsGamepadInput *self,
     void (*callback)(float x, float y, gpointer data),
     gpointer data);

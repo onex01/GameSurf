@@ -290,6 +290,47 @@ gs_cursor_controller_set_visible(GsCursorController *self,
     gtk_widget_set_visible(self->dot, visible);
 }
 
+void
+gs_cursor_controller_move(GsCursorController *self, float dx, float dy)
+{
+    g_return_if_fail(GS_IS_CURSOR_CONTROLLER(self));
+
+    self->cx += dx;
+    self->cy += dy;
+
+    if (self->cx < 0.0) self->cx = 0.0;
+    if (self->cy < 0.0) self->cy = 0.0;
+    if (self->cx > self->view_w) self->cx = self->view_w;
+    if (self->cy > self->view_h) self->cy = self->view_h;
+
+    gtk_widget_set_margin_start(self->dot, (int)self->cx - 8);
+    gtk_widget_set_margin_top(self->dot, (int)self->cy - 8);
+}
+
+void
+gs_cursor_controller_click(GsCursorController *self, gboolean press)
+{
+    g_return_if_fail(GS_IS_CURSOR_CONTROLLER(self));
+    if (!press || !self->web_view) return;
+    gs_web_view_click_at(self->web_view, (int)self->cx, (int)self->cy, 0);
+}
+
+void
+gs_cursor_controller_right_click(GsCursorController *self)
+{
+    g_return_if_fail(GS_IS_CURSOR_CONTROLLER(self));
+    if (!self->web_view) return;
+    gs_web_view_click_at(self->web_view, (int)self->cx, (int)self->cy, 2);
+}
+
+void
+gs_cursor_controller_scroll(GsCursorController *self, int direction)
+{
+    g_return_if_fail(GS_IS_CURSOR_CONTROLLER(self));
+    if (!self->web_view) return;
+    gs_web_view_scroll(self->web_view, 0, direction * 128);
+}
+
 /* ---------------------------------------------------------------
  * GObject lifecycle
  * --------------------------------------------------------------- */

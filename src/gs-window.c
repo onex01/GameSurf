@@ -7,6 +7,7 @@
 #include "gs-cache-manager.h"
 #include "gs-settings.h"
 #include "gs-utils.h"
+#include "gs-homescreen.h"
 #include <webkit/webkit.h>
 #include <SDL2/SDL.h>
 #include <math.h>
@@ -21,9 +22,13 @@ struct _GsWindow {
     GtkWidget *stack;
     GtkWidget *overlay;
     GtkWidget *web_view;
+    GtkWidget *web_view_container;
+    GsHomeScreen *home_screen;
     GtkWidget *menu_overlay;
     GtkWidget *status_label;
     GtkWidget *hint_label;
+    GtkWidget *progress_bar;
+    GtkWidget *tab_bar;
     GtkWidget *search_engine_combo;
     GtkWidget *settings_dialog;
     GtkWidget *virtual_cursor;
@@ -67,6 +72,16 @@ static void open_keyboard_for_page(GsWindow *self);
 static void set_chrome_visible(GsWindow *self, gboolean visible);
 static void on_cache_cleared(GObject *source_object, GAsyncResult *result, gpointer user_data);
 static void on_gamepad_extended_axis(float lx, float ly, float rx, float ry, float lt, float rt, gpointer user_data);
+static void on_homescreen_navigate(GsHomeScreen *home, const char *url, gpointer user_data);
+static void update_tab_bar(GsWindow *self);
+static void bind_web_view_signals(GsWindow *self, GtkWidget *view);
+static void show_home_screen(GsWindow *self);
+static void show_web_view(GsWindow *self);
+static void switch_to_tab(GsWindow *self, guint index);
+static void on_load_changed(WebKitWebView *web_view, WebKitLoadEvent event, GsWindow *self);
+static gboolean on_web_view_enter_fullscreen(WebKitWebView *web_view, GsWindow *self);
+static gboolean on_web_view_leave_fullscreen(WebKitWebView *web_view, GsWindow *self);
+static void on_tab_button_clicked(GtkButton *button, gpointer user_data);
 static void update_virtual_cursor(GsWindow *self);
 static void click_virtual_cursor(GsWindow *self, int button);
 static void apply_hint_visibility(GsWindow *self);
@@ -163,8 +178,11 @@ static void handle_settings_button(GsWindow *self, SDL_GameControllerButton btn)
 }
 
 // Обработчики геймпада
-static void on_gamepad_button(SDL_GameControllerButton btn, gpointer user_data) {
+static void on_gamepad_button(SDL_GameControllerButton btn, gboolean pressed, gpointer user_data) {
+    if (!pressed) return;
     GsWindow *self = GS_WINDOW(user_data);
+
+    gboolean is_home = self->home_screen && gtk_stack_get_visible_child(GTK_STACK(self->stack)) == GTK_WIDGET(self->home_screen);
 
     if (self->settings_dialog) {
         handle_settings_button(self, btn);
@@ -224,6 +242,41 @@ static void on_gamepad_button(SDL_GameControllerButton btn, gpointer user_data) 
                 } else {
                     gs_web_view_move_caret(GS_WEB_VIEW(self->web_view), 1);
                 }
+                break;
+            default:
+                break;
+        }
+        return;
+    }
+
+    if (is_home) {
+        switch (btn) {
+            case SDL_CONTROLLER_BUTTON_A: {
+                GtkWidget *focus = gtk_widget_get_focus_child(GTK_WIDGET(self->home_screen));
+                if (focus) {
+                    gtk_widget_activate(focus);
+                }
+                break;
+            }
+            case SDL_CONTROLLER_BUTTON_B:
+                break;
+            case SDL_CONTROLLER_BUTTON_BACK:
+                show_settings_dialog(self);
+                break;
+            case SDL_CONTROLLER_BUTTON_DPAD_UP:
+                gtk_widget_child_focus(GTK_WIDGET(self->home_screen), GTK_DIR_UP);
+                break;
+            case SDL_CONTROLLER_BUTTON_DPAD_DOWN:
+                gtk_widget_child_focus(GTK_WIDGET(self->home_screen), GTK_DIR_DOWN);
+                break;
+            case SDL_CONTROLLER_BUTTON_DPAD_LEFT:
+                gtk_widget_child_focus(GTK_WIDGET(self->home_screen), GTK_DIR_LEFT);
+                break;
+            case SDL_CONTROLLER_BUTTON_DPAD_RIGHT:
+                gtk_widget_child_focus(GTK_WIDGET(self->home_screen), GTK_DIR_RIGHT);
+                break;
+            case SDL_CONTROLLER_BUTTON_START:
+                open_keyboard_for_url(self);
                 break;
             default:
                 break;
@@ -303,9 +356,9 @@ static void on_gamepad_button(SDL_GameControllerButton btn, gpointer user_data) 
     }
 }
 
-static void on_gamepad_axis(float x, float y, gpointer user_data) {
-    (void)x;
-    (void)y;
+static void on_gamepad_axis(int axis, float value, gpointer user_data) {
+    (void)axis;
+    (void)value;
     (void)user_data;
 }
 
@@ -378,6 +431,85 @@ static void on_gamepad_extended_axis(float lx, float ly, float rx, float ry, flo
     self->right_trigger_pressed = rt > 0.55f;
 }
 
+static void switch_to_tab(GsWindow *self, guint index) {
+    if (!self->tabs) return;
+    if (index >= gs_tab_manager_get_tab_count(self->tabs)) return;
+    gs_tab_manager_switch_tab(self->tabs, index);
+    GsTab *tab = gs_tab_manager_get_current(self->tabs);
+    if (!tab) return;
+    gtk_widget_unparent(self->web_view);
+    self->web_view = GTK_WIDGET(tab->web_view);
+    gtk_widget_set_vexpand(self->web_view, TRUE);
+    bind_web_view_signals(self, self->web_view);
+    gtk_box_append(GTK_BOX(self->web_view_container), self->web_view);
+    gs_cursor_controller_set_web_view(self->cursor, GS_WEB_VIEW(self->web_view));
+    update_tab_bar(self);
+    show_web_view(self);
+}
+
+static void update_tab_bar(GsWindow *self) {
+    if (!self->tab_bar || !self->tabs) return;
+    GtkWidget *child;
+    while ((child = gtk_widget_get_first_child(self->tab_bar))) {
+        gtk_box_remove(GTK_BOX(self->tab_bar), child);
+    }
+    guint count = gs_tab_manager_get_tab_count(self->tabs);
+    if (count <= 1) {
+        gtk_widget_set_visible(self->tab_bar, FALSE);
+        return;
+    }
+    gtk_widget_set_visible(self->tab_bar, TRUE);
+    for (guint i = 0; i < count; i++) {
+        g_autofree char *label = g_strdup_printf("Tab %u", i + 1);
+        GtkWidget *btn = gtk_button_new_with_label(label);
+        gtk_widget_set_hexpand(btn, TRUE);
+        gtk_widget_set_focus_on_click(btn, FALSE);
+        g_signal_connect(btn, "clicked", G_CALLBACK(on_tab_button_clicked), self);
+        g_object_set_data(G_OBJECT(btn), "tab-index", GINT_TO_POINTER(i));
+        gtk_box_append(GTK_BOX(self->tab_bar), btn);
+    }
+}
+
+static void on_tab_button_clicked(GtkButton *button, gpointer user_data) {
+    GsWindow *self = GS_WINDOW(user_data);
+    int idx = GPOINTER_TO_INT(g_object_get_data(G_OBJECT(button), "tab-index"));
+    switch_to_tab(self, idx);
+}
+
+static void bind_web_view_signals(GsWindow *self, GtkWidget *view) {
+    g_signal_connect(view, "load-changed", G_CALLBACK(on_load_changed), self);
+    g_signal_connect(view, "notify::estimated-load-progress", G_CALLBACK(on_load_progress_changed), self);
+    g_signal_connect(view, "enter-fullscreen", G_CALLBACK(on_web_view_enter_fullscreen), self);
+    g_signal_connect(view, "leave-fullscreen", G_CALLBACK(on_web_view_leave_fullscreen), self);
+    self->web_view = view;
+}
+
+static void show_home_screen(GsWindow *self) {
+    gtk_stack_set_visible_child(GTK_STACK(self->stack), GTK_WIDGET(self->home_screen));
+    gtk_widget_set_visible(self->tab_bar, FALSE);
+    set_chrome_visible(self, FALSE);
+    gtk_widget_set_visible(self->hint_label, FALSE);
+}
+
+static void show_web_view(GsWindow *self) {
+    gtk_stack_set_visible_child(GTK_STACK(self->stack), self->web_view_container);
+    gtk_widget_set_visible(self->tab_bar, gs_tab_manager_get_tab_count(self->tabs) > 1);
+    set_chrome_visible(self, FALSE);
+    gtk_widget_set_visible(self->hint_label, TRUE);
+}
+
+static void on_homescreen_navigate(GsHomeScreen *home, const char *url, gpointer user_data) {
+    (void)home;
+    GsWindow *self = GS_WINDOW(user_data);
+    if (!url || !*url) return;
+    GsTab *tab = gs_tab_manager_get_current(self->tabs);
+    if (!tab) return;
+    webkit_web_view_load_uri(WEBKIT_WEB_VIEW(tab->web_view), url);
+    gtk_editable_set_text(GTK_EDITABLE(self->url_entry), url);
+    gs_homescreen_record_visit(self->home_screen, url, url);
+    show_web_view(self);
+}
+
 // UI Callbacks
 static gboolean looks_like_url(const char *text) {
     return g_str_has_prefix(text, "http://") ||
@@ -404,10 +536,30 @@ static void on_url_activate(GtkEntry *entry, GsWindow *self) {
 }
 
 static void on_load_changed(WebKitWebView *web_view, WebKitLoadEvent event, GsWindow *self) {
-    if (event == WEBKIT_LOAD_FINISHED) {
+    if (event == WEBKIT_LOAD_STARTED) {
+        gtk_widget_set_visible(self->progress_bar, TRUE);
+        gtk_progress_bar_set_fraction(GTK_PROGRESS_BAR(self->progress_bar), 0.0);
+    } else if (event == WEBKIT_LOAD_FINISHED) {
         const char *uri = webkit_web_view_get_uri(web_view);
-        gtk_editable_set_text(GTK_EDITABLE(self->url_entry), uri);
+        if (uri && *uri) {
+            gtk_editable_set_text(GTK_EDITABLE(self->url_entry), uri);
+            const char *title = webkit_web_view_get_title(web_view);
+            if (!title || *title == '\0')
+                title = uri;
+            gs_homescreen_record_visit(self->home_screen, title, uri);
+        }
+        gtk_widget_set_visible(self->progress_bar, FALSE);
+        gtk_progress_bar_set_fraction(GTK_PROGRESS_BAR(self->progress_bar), 0.0);
+    } else if (event == WEBKIT_LOAD_FAILED || event == WEBKIT_LOAD_FAILED_WITH_TLS_ERRORS) {
+        gtk_widget_set_visible(self->progress_bar, FALSE);
+        gtk_progress_bar_set_fraction(GTK_PROGRESS_BAR(self->progress_bar), 0.0);
     }
+}
+
+static void on_load_progress_changed(GObject *object, GParamSpec *pspec, GsWindow *self) {
+    (void)pspec;
+    double progress = webkit_web_view_get_estimated_load_progress(WEBKIT_WEB_VIEW(object));
+    gtk_progress_bar_set_fraction(GTK_PROGRESS_BAR(self->progress_bar), progress);
 }
 
 static void on_back_clicked(GtkButton *button, GsWindow *self) {
@@ -431,6 +583,23 @@ static void update_hint(GsWindow *self, const char *text) {
     }
     gtk_label_set_text(GTK_LABEL(self->hint_label), text);
     apply_hint_visibility(self);
+}
+
+static void update_cursor_visibility(GsWindow *self) {
+    if (!self->cursor) {
+        return;
+    }
+
+    gboolean show_dot = self->cursor_mode && !self->use_internal_cursor;
+    gs_cursor_controller_set_visible(self->cursor, show_dot);
+
+    if (self->virtual_cursor) {
+        gtk_widget_set_visible(self->virtual_cursor,
+            self->cursor_mode && self->use_internal_cursor);
+        if (self->cursor_mode && self->use_internal_cursor) {
+            update_virtual_cursor(self);
+        }
+    }
 }
 
 static void apply_hint_visibility(GsWindow *self) {
@@ -962,15 +1131,35 @@ static void gs_window_init(GsWindow *self) {
     gtk_widget_add_css_class(self->hint_label, "control-hints");
     gtk_widget_set_halign(self->hint_label, GTK_ALIGN_FILL);
     gtk_box_append(GTK_BOX(box), self->hint_label);
-    
-    // Веб-вид
-    self->web_view = GTK_WIDGET(gs_web_view_new());
+
+    self->tab_bar = gtk_box_new(GTK_ORIENTATION_HORIZONTAL, 4);
+    gtk_widget_add_css_class(self->tab_bar, "tab-bar");
+    gtk_widget_set_visible(self->tab_bar, FALSE);
+    gtk_box_append(GTK_BOX(box), self->tab_bar);
+
+    self->stack = gtk_stack_new();
+    gtk_widget_set_vexpand(self->stack, TRUE);
+    gtk_box_append(GTK_BOX(box), self->stack);
+
+    char *home_data_dir = g_build_filename(g_get_user_data_dir(), "gamesurf", NULL);
+    g_mkdir_with_parents(home_data_dir, 0755);
+    self->home_screen = gs_homescreen_new(home_data_dir);
+    gs_homescreen_set_nav_callback(self->home_screen, on_homescreen_navigate, self);
+    gtk_stack_add_named(GTK_STACK(self->stack), GTK_WIDGET(self->home_screen), "home");
+    g_free(home_data_dir);
+
+    self->web_view_container = gtk_box_new(GTK_ORIENTATION_VERTICAL, 0);
+    gtk_widget_set_vexpand(self->web_view_container, TRUE);
+    gtk_stack_add_named(GTK_STACK(self->stack), self->web_view_container, "web");
+
+    self->tabs = gs_tab_manager_new();
+    GsTab *first_tab = gs_tab_manager_new_tab(self->tabs);
+    self->web_view = GTK_WIDGET(first_tab->web_view);
     gtk_widget_set_vexpand(self->web_view, TRUE);
-    g_signal_connect(self->web_view, "load-changed", G_CALLBACK(on_load_changed), self);
-    g_signal_connect(self->web_view, "enter-fullscreen", G_CALLBACK(on_web_view_enter_fullscreen), self);
-    g_signal_connect(self->web_view, "leave-fullscreen", G_CALLBACK(on_web_view_leave_fullscreen), self);
-    gtk_box_append(GTK_BOX(box), self->web_view);
-    self->cache_manager = gs_cache_manager_new(webkit_web_view_get_network_session(WEBKIT_WEB_VIEW(self->web_view)));
+    bind_web_view_signals(self, self->web_view);
+    gs_cursor_controller_set_web_view(self->cursor, GS_WEB_VIEW(self->web_view));
+    gtk_box_append(GTK_BOX(self->web_view_container), self->web_view);
+    self->cache_manager = gs_cache_manager_new(webkit_web_view_get_network_session(WEBKIT_WEB_VIEW(self->web_view)));    
     
     /* Виртуальная клавиатура v2 */
     self->keyboard = gs_virtual_keyboard_v2_new();
@@ -1015,6 +1204,7 @@ static void gs_window_init(GsWindow *self) {
     gs_gamepad_manager_connect_axis_motion(self->gamepad, on_gamepad_axis, self);
     gs_gamepad_manager_connect_extended_axis_motion(self->gamepad, on_gamepad_extended_axis, self);
     gs_gamepad_manager_start(self->gamepad);
+    gs_cursor_controller_set_gamepad(self->cursor, self->gamepad);
     
     self->cursor_mode = TRUE; // По умолчанию режим курсора
     self->keyboard_visible = FALSE;
@@ -1026,6 +1216,7 @@ static void gs_window_init(GsWindow *self) {
     self->right_trigger_pressed = FALSE;
     self->last_axis_nav_time = 0;
     self->last_zoom_time = 0;
+    update_cursor_visibility(self);
     apply_hint_visibility(self);
     update_virtual_cursor(self);
     g_signal_connect(self, "close-request", G_CALLBACK(on_close_request), self);

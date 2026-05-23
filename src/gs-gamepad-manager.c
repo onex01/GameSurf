@@ -30,11 +30,13 @@ struct _GsGamepadManager {
     /* Текущее состояние */
     float        axis   [SDL_CONTROLLER_AXIS_MAX];
     gboolean     button [SDL_CONTROLLER_BUTTON_MAX];
+    GsGamepadConfig config;
 
     /* Callback-и из gs-gamepad-manager.h (что реально там объявлено) */
-    GsGamepadButtonCallback  button_cb;
-    GsGamepadAxisCallback    axis_cb;
-    gpointer                 cb_data;
+    GsGamepadButtonCallback          button_cb;
+    GsGamepadAxisCallback            axis_cb;
+    GsGamepadExtendedAxisCallback    extended_axis_cb;
+    gpointer                         cb_data;
 };
 
 G_DEFINE_TYPE(GsGamepadManager, gs_gamepad_manager, G_TYPE_OBJECT)
@@ -118,7 +120,7 @@ poll_events(gpointer user_data)
             if (btn >= 0 && btn < SDL_CONTROLLER_BUTTON_MAX)
                 self->button[btn] = pressed;
             if (self->button_cb)
-                self->button_cb(self, btn, pressed, self->cb_data);
+                self->button_cb(btn, pressed, self->cb_data);
             break;
         }
 
@@ -130,7 +132,16 @@ poll_events(gpointer user_data)
                 if (val > -0.15f && val < 0.15f) val = 0.0f;
                 self->axis[axis] = val;
                 if (self->axis_cb)
-                    self->axis_cb(self, axis, val, self->cb_data);
+                    self->axis_cb(axis, val, self->cb_data);
+                if (self->extended_axis_cb)
+                    self->extended_axis_cb(
+                        self->axis[SDL_CONTROLLER_AXIS_LEFTX],
+                        self->axis[SDL_CONTROLLER_AXIS_LEFTY],
+                        self->axis[SDL_CONTROLLER_AXIS_RIGHTX],
+                        self->axis[SDL_CONTROLLER_AXIS_RIGHTY],
+                        self->axis[SDL_CONTROLLER_AXIS_TRIGGERLEFT],
+                        self->axis[SDL_CONTROLLER_AXIS_TRIGGERRIGHT],
+                        self->cb_data);
             }
             break;
         }
@@ -201,6 +212,13 @@ gs_gamepad_manager_init(GsGamepadManager *self)
     }
     SDL_GameControllerEventState(SDL_ENABLE);
 
+    /* Default config */
+    self->config.sensitivity = 1.0f;
+    self->config.deadzone = 0.15f;
+    self->config.speed_mode = GS_CURSOR_SPEED_NORMAL;
+    self->config.invert_y = FALSE;
+    self->config.haptic_feedback = FALSE;
+
     /* Hash-table: instance_id → GsGamepadEntry* */
     self->pads = g_hash_table_new_full(
         g_direct_hash, g_direct_equal,
@@ -226,6 +244,63 @@ gs_gamepad_manager_new(void)
 }
 
 void
+gs_gamepad_manager_set_config(GsGamepadManager *self, const GsGamepadConfig *config)
+{
+    g_return_if_fail(GS_IS_GAMEPAD_MANAGER(self));
+    if (!config) return;
+    self->config = *config;
+}
+
+void
+gs_gamepad_manager_start(GsGamepadManager *self)
+{
+    g_return_if_fail(GS_IS_GAMEPAD_MANAGER(self));
+    if (!self->poll_id)
+        self->poll_id = g_timeout_add(8, poll_events, self);
+}
+
+void
+gs_gamepad_manager_stop(GsGamepadManager *self)
+{
+    g_return_if_fail(GS_IS_GAMEPAD_MANAGER(self));
+    if (self->poll_id) {
+        g_source_remove(self->poll_id);
+        self->poll_id = 0;
+    }
+}
+
+void
+gs_gamepad_manager_connect_button_press(GsGamepadManager *self,
+    GsGamepadButtonCallback callback,
+    gpointer data)
+{
+    g_return_if_fail(GS_IS_GAMEPAD_MANAGER(self));
+    self->button_cb = callback;
+    self->cb_data   = data;
+}
+
+void
+gs_gamepad_manager_connect_axis_motion(GsGamepadManager *self,
+    GsGamepadAxisCallback callback,
+    gpointer data)
+{
+    g_return_if_fail(GS_IS_GAMEPAD_MANAGER(self));
+    self->axis_cb = callback;
+    self->cb_data = data;
+}
+
+void
+gs_gamepad_manager_connect_extended_axis_motion(GsGamepadManager *self,
+    GsGamepadExtendedAxisCallback callback,
+    gpointer data)
+{
+    g_return_if_fail(GS_IS_GAMEPAD_MANAGER(self));
+    self->extended_axis_cb = callback;
+    self->cb_data = data;
+}
+
+/* Compatibility wrapper for older internal set-callbacks API */
+void
 gs_gamepad_manager_set_callbacks(GsGamepadManager        *self,
                                   GsGamepadButtonCallback  button_cb,
                                   GsGamepadAxisCallback    axis_cb,
@@ -245,11 +320,13 @@ gs_gamepad_manager_get_axis(GsGamepadManager *self, int axis)
     return self->axis[axis];
 }
 
+
 gboolean
 gs_gamepad_manager_get_button(GsGamepadManager *self, int button)
 {
     g_return_val_if_fail(GS_IS_GAMEPAD_MANAGER(self), FALSE);
-    if (button < 0 || button >= SDL_CONTROLLER_BUTTON_MAX) return FALSE;
+    if (button < 0 || button >= SDL_CONTROLLER_BUTTON_MAX)
+        return FALSE;
     return self->button[button];
 }
 

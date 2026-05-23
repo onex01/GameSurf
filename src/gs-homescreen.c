@@ -14,8 +14,9 @@
 #include "gs-homescreen.h"
 #include "gs-settings.h"
 #include <gtk/gtk.h>
-#include <json-glib/json-glib.h>   /* optional: for history persistence */
 #include <time.h>
+
+static void gs_homescreen_navigate(GtkButton *button, gpointer user_data);
 
 #define MAX_RECENT   12
 #define MAX_PINNED    6
@@ -99,33 +100,24 @@ entry_free (GsHistoryEntry *e)
 static void
 save_json_list (GList *list, const char *path)
 {
-    JsonBuilder *b = json_builder_new ();
-    json_builder_begin_array (b);
-    for (GList *l = list; l; l = l->next) {
+    GKeyFile *kf = g_key_file_new();
+    int idx = 0;
+    for (GList *l = list; l; l = l->next, idx++) {
         GsHistoryEntry *e = l->data;
-        json_builder_begin_object (b);
-        json_builder_set_member_name (b, "title");
-        json_builder_add_string_value (b, e->title);
-        json_builder_set_member_name (b, "url");
-        json_builder_add_string_value (b, e->url);
-        json_builder_set_member_name (b, "ts");
-        json_builder_add_int_value (b, (gint64) e->last_visited);
-        json_builder_end_object (b);
+        g_autofree char *group = g_strdup_printf("entry%03d", idx);
+        g_key_file_set_string(kf, group, "title", e->title);
+        g_key_file_set_string(kf, group, "url", e->url);
+        g_key_file_set_int64(kf, group, "ts", (gint64)e->last_visited);
     }
-    json_builder_end_array (b);
-
-    JsonGenerator *gen = json_generator_new ();
-    json_generator_set_pretty (gen, TRUE);
-    json_generator_set_root (gen, json_builder_get_root (b));
 
     GError *err = NULL;
-    json_generator_to_file (gen, path, &err);
-    if (err) {
-        g_warning ("GameSurf: failed to save %s: %s", path, err->message);
-        g_error_free (err);
+    g_autofree char *data = g_key_file_to_data(kf, NULL, &err);
+    if (!data || !g_file_set_contents(path, data, -1, &err)) {
+        g_warning("GameSurf: failed to save %s: %s", path, err ? err->message : "unknown");
+        g_clear_error(&err);
     }
-    g_object_unref (gen);
-    g_object_unref (b);
+    g_clear_error(&err);
+    g_key_file_free(kf);
 }
 
 /* Load history list from JSON */
@@ -133,29 +125,44 @@ static GList *
 load_json_list (const char *path)
 {
     GList  *result = NULL;
-    GError *err    = NULL;
-
-    JsonParser *p = json_parser_new ();
-    if (!json_parser_load_from_file (p, path, &err)) {
-        if (!g_error_matches (err, G_FILE_ERROR, G_FILE_ERROR_NOENT))
-            g_warning ("GameSurf: cannot load %s: %s", path, err->message);
-        g_error_free (err);
-        g_object_unref (p);
+    GError *err = NULL;
+    GKeyFile *kf = g_key_file_new();
+    if (!g_key_file_load_from_file(kf, path, G_KEY_FILE_NONE, &err)) {
+        if (!g_error_matches(err, G_FILE_ERROR, G_FILE_ERROR_NOENT))
+            g_warning("GameSurf: cannot load %s: %s", path, err->message);
+        g_clear_error(&err);
+        g_key_file_free(kf);
         return NULL;
     }
 
-    JsonArray *arr = json_node_get_array (json_parser_get_root (p));
-    guint n = json_array_get_length (arr);
-    for (guint i = 0; i < n; i++) {
-        JsonObject *obj = json_array_get_object_element (arr, i);
-        GsHistoryEntry *e = g_new0 (GsHistoryEntry, 1);
-        e->title        = g_strdup (json_object_get_string_member (obj, "title"));
-        e->url          = g_strdup (json_object_get_string_member (obj, "url"));
-        e->last_visited = (time_t) json_object_get_int_member (obj, "ts");
-        result = g_list_append (result, e);
+    gsize n_groups = 0;
+    gchar **groups = g_key_file_get_groups(kf, &n_groups);
+    for (gsize i = 0; i < n_groups; i++) {
+        const char *group = groups[i];
+        GError *local_err = NULL;
+        const char *title = g_key_file_get_string(kf, group, "title", &local_err);
+        if (local_err) {
+            g_clear_error(&local_err);
+            continue;
+        }
+        const char *url = g_key_file_get_string(kf, group, "url", &local_err);
+        if (local_err) {
+            g_clear_error(&local_err);
+            continue;
+        }
+        gint64 ts = g_key_file_get_int64(kf, group, "ts", &local_err);
+        if (local_err) {
+            g_clear_error(&local_err);
+            ts = time(NULL);
+        }
+        GsHistoryEntry *e = g_new0(GsHistoryEntry, 1);
+        e->title = g_strdup(title);
+        e->url = g_strdup(url);
+        e->last_visited = (time_t) ts;
+        result = g_list_append(result, e);
     }
-
-    g_object_unref (p);
+    g_strfreev(groups);
+    g_key_file_free(kf);
     return result;
 }
 
@@ -190,7 +197,7 @@ make_tile (GsHomeScreen *self, GsHistoryEntry *e, gboolean is_pinned)
                             g_strdup (e->url), g_free);
 
     /* Activate callback */
-    g_signal_connect_swapped (btn, "clicked",
+    g_signal_connect (btn, "clicked",
         G_CALLBACK (gs_homescreen_navigate), self);
 
     return btn;
@@ -234,7 +241,7 @@ rebuild_recent (GsHomeScreen *self)
 GsHomeScreen *
 gs_homescreen_new (const char *data_dir)
 {
-    GsHomeScreen *self = g_object_new (GS_TYPE_HOMESCREEN, NULL);
+    GsHomeScreen *self = g_object_new (GS_TYPE_HOME_SCREEN, NULL);
     self->data_dir = g_strdup (data_dir);
 
     /* Load persisted data */
@@ -255,7 +262,7 @@ gs_homescreen_set_nav_callback (GsHomeScreen     *self,
                                 GsHomeScreenNavCb cb,
                                 gpointer          user_data)
 {
-    g_return_if_fail (GS_IS_HOMESCREEN (self));
+    g_return_if_fail (GS_IS_HOME_SCREEN (self));
     self->nav_cb   = cb;
     self->nav_data = user_data;
 }
@@ -270,7 +277,7 @@ gs_homescreen_record_visit (GsHomeScreen *self,
                             const char   *title,
                             const char   *url)
 {
-    g_return_if_fail (GS_IS_HOMESCREEN (self));
+    g_return_if_fail (GS_IS_HOME_SCREEN (self));
     if (!url || !*url) return;
 
     /* Remove existing entry for same URL (we'll re-insert at head) */
@@ -310,7 +317,7 @@ gs_homescreen_pin_url (GsHomeScreen *self,
                        const char   *title,
                        const char   *url)
 {
-    g_return_if_fail (GS_IS_HOMESCREEN (self));
+    g_return_if_fail (GS_IS_HOME_SCREEN (self));
 
     /* Avoid duplicates */
     for (GList *l = self->pinned; l; l = l->next) {
@@ -335,7 +342,7 @@ gs_homescreen_pin_url (GsHomeScreen *self,
 void
 gs_homescreen_unpin_url (GsHomeScreen *self, const char *url)
 {
-    g_return_if_fail (GS_IS_HOMESCREEN (self));
+    g_return_if_fail (GS_IS_HOME_SCREEN (self));
     for (GList *l = self->pinned; l; l = l->next) {
         GsHistoryEntry *e = l->data;
         if (g_strcmp0 (e->url, url) == 0) {
@@ -351,10 +358,11 @@ gs_homescreen_unpin_url (GsHomeScreen *self, const char *url)
 }
 
 /* Called when a tile button is clicked (signal handler) */
-void
-gs_homescreen_navigate (GsHomeScreen *self, GtkButton *btn)
+static void
+gs_homescreen_navigate (GtkButton *button, gpointer user_data)
 {
-    const char *url = g_object_get_data (G_OBJECT (btn), "gs-url");
+    GsHomeScreen *self = GS_HOME_SCREEN (user_data);
+    const char *url = g_object_get_data (G_OBJECT (button), "gs-url");
     if (url && self->nav_cb)
         self->nav_cb (self, url, self->nav_data);
 }
@@ -363,7 +371,7 @@ gs_homescreen_navigate (GsHomeScreen *self, GtkButton *btn)
 GtkWidget *
 gs_homescreen_get_search_entry (GsHomeScreen *self)
 {
-    g_return_val_if_fail (GS_IS_HOMESCREEN (self), NULL);
+    g_return_val_if_fail (GS_IS_HOME_SCREEN (self), NULL);
     return self->search_entry;
 }
 
@@ -374,7 +382,7 @@ gs_homescreen_get_search_entry (GsHomeScreen *self)
 static void
 gs_homescreen_finalize (GObject *object)
 {
-    GsHomeScreen *self = GS_HOMESCREEN (object);
+    GsHomeScreen *self = GS_HOME_SCREEN (object);
     g_list_free_full (self->history, (GDestroyNotify) entry_free);
     g_list_free_full (self->pinned,  (GDestroyNotify) entry_free);
     g_free (self->data_dir);
@@ -394,7 +402,7 @@ gs_homescreen_class_init (GsHomeScreenClass *klass)
 static void
 search_activated (GtkEntry *entry, gpointer user_data)
 {
-    GsHomeScreen *self = GS_HOMESCREEN (user_data);
+    GsHomeScreen *self = GS_HOME_SCREEN (user_data);
     const char   *text = gtk_editable_get_text (GTK_EDITABLE (entry));
     if (!text || !*text) return;
 

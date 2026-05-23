@@ -219,3 +219,21 @@ void gs_gamepad_input_connect_triggers(GsGamepadInput *self,
     self->triggers_callback = callback;
     self->triggers_data = data;
 }
+
+float
+gs_gamepad_input_get_axis(GsGamepadInput *self, int axis)
+{
+    g_return_val_if_fail(GS_IS_GAMEPAD_INPUT(self), 0.0f);
+    if (!self->controller) return 0.0f;
+    if (axis < 0 || axis >= SDL_CONTROLLER_AXIS_MAX) return 0.0f;
+    return SDL_GameControllerGetAxis(self->controller, axis) / 32767.0f;
+}
+
+gboolean
+gs_gamepad_input_get_button(GsGamepadInput *self, int button)
+{
+    g_return_val_if_fail(GS_IS_GAMEPAD_INPUT(self), FALSE);
+    if (!self->controller) return FALSE;
+    if (button < 0 || button >= SDL_CONTROLLER_BUTTON_MAX) return FALSE;
+    return SDL_GameControllerGetButton(self->controller, button) != 0;
+}

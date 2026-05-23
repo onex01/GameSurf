@@ -47,6 +47,7 @@ sources = files(
   'src/gs-window.c',
   'src/gs-web-view.c',
   'src/gs-gamepad-manager.c',
+  'src/gs-homescreen.c',
   'src/gs-cursor-controller.c',
   'src/gs-virtual-keyboard-v2.c',  # используем v2
   'src/gs-video-controller.c',

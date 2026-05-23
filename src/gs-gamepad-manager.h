@@ -24,6 +24,10 @@ typedef struct {
     gboolean haptic_feedback;
 } GsGamepadConfig;
 
+typedef void (*GsGamepadButtonCallback)(SDL_GameControllerButton btn, gboolean pressed, gpointer data);
+typedef void (*GsGamepadAxisCallback)(int axis, float value, gpointer data);
+typedef void (*GsGamepadExtendedAxisCallback)(float lx, float ly, float rx, float ry, float lt, float rt, gpointer data);
+
 GsGamepadManager *gs_gamepad_manager_new(void);
 void gs_gamepad_manager_set_config(GsGamepadManager *self, const GsGamepadConfig *config);
 void gs_gamepad_manager_start(GsGamepadManager *self);
@@ -31,11 +35,13 @@ void gs_gamepad_manager_stop(GsGamepadManager *self);
 
 // Сигналы
 void gs_gamepad_manager_connect_button_press(GsGamepadManager *self, 
-    void (*callback)(SDL_GameControllerButton btn, gpointer data), gpointer data);
+    GsGamepadButtonCallback callback, gpointer data);
 void gs_gamepad_manager_connect_axis_motion(GsGamepadManager *self,
-    void (*callback)(float x, float y, gpointer data), gpointer data);
+    GsGamepadAxisCallback callback, gpointer data);
 void gs_gamepad_manager_connect_extended_axis_motion(GsGamepadManager *self,
-    void (*callback)(float lx, float ly, float rx, float ry, float lt, float rt, gpointer data), gpointer data);
+    GsGamepadExtendedAxisCallback callback, gpointer data);
+
+gboolean gs_gamepad_manager_get_button(GsGamepadManager *self, int button);
 
 G_END_DECLS
 

@@ -152,31 +152,166 @@ gs_web_view_new_with_storage(const char *base_dir)
     g_mkdir_with_parents(data_dir,  0755);
     g_mkdir_with_parents(cache_dir, 0755);
 
-    /* WebKitGTK 6.0: создаём NetworkSession с путями */
-    WebKitNetworkSession *session =
-        webkit_network_session_new(data_dir, cache_dir);
-
-    if (session) {
+    WebKitNetworkSession *default_session = webkit_network_session_get_default();
+    if (default_session) {
         WebKitCookieManager *cm =
-            webkit_network_session_get_cookie_manager(session);
-
-        webkit_cookie_manager_set_persistent_storage(
-            cm, cookie_db, WEBKIT_COOKIE_PERSISTENT_STORAGE_SQLITE);
-
-        webkit_cookie_manager_set_accept_policy(
-            cm, WEBKIT_COOKIE_POLICY_ACCEPT_ALWAYS);
+            webkit_network_session_get_cookie_manager(default_session);
+        if (cm) {
+            webkit_cookie_manager_set_persistent_storage(
+                cm, cookie_db, WEBKIT_COOKIE_PERSISTENT_STORAGE_SQLITE);
+            webkit_cookie_manager_set_accept_policy(
+                cm, WEBKIT_COOKIE_POLICY_ACCEPT_ALWAYS);
+            webkit_network_session_set_persistent_credential_storage_enabled(
+                default_session, TRUE);
+        }
     }
 
-    /* Создаём WebView — привязку session к WebView делает gs-window.c
-     * через webkit_web_view_new_with_related_view() или WebKitWebContext. */
     GsWebView *view = g_object_new(GS_TYPE_WEB_VIEW, NULL);
-
-    if (session)
-        g_object_unref(session);
 
     g_free(data_dir);
     g_free(cache_dir);
     g_free(cookie_db);
 
     return view;
+}
+
+GsWebView *
+gs_web_view_new(void)
+{
+    char *base_dir = g_build_filename(g_get_user_data_dir(), "gamesurf", NULL);
+    GsWebView *view = gs_web_view_new_with_storage(base_dir);
+    g_free(base_dir);
+    return view;
+}
+
+static void
+send_keyboard_event(GsWebView *self, const char *key)
+{
+    g_return_if_fail(GS_IS_WEB_VIEW(self));
+    char *js = g_strdup_printf(
+        "(function(){var e=new KeyboardEvent('keydown',{key:'%s',code:'%s',bubbles:true,cancelable:true});"
+        "document.activeElement.dispatchEvent(e);})();",
+        key, key);
+    run_js(self, js);
+    g_free(js);
+}
+
+void
+gs_web_view_gamepad_navigate(GsWebView *self, int dx, int dy)
+{
+    g_return_if_fail(GS_IS_WEB_VIEW(self));
+    const char *key = NULL;
+    if (dx < 0) key = "ArrowLeft";
+    else if (dx > 0) key = "ArrowRight";
+    else if (dy < 0) key = "ArrowUp";
+    else if (dy > 0) key = "ArrowDown";
+    if (!key) return;
+    send_keyboard_event(self, key);
+}
+
+void
+gs_web_view_gamepad_activate(GsWebView *self)
+{
+    g_return_if_fail(GS_IS_WEB_VIEW(self));
+    run_js(self,
+        "(function(){var el=document.activeElement; if(el && typeof el.click==='function') el.click();})();");
+}
+
+void
+gs_web_view_insert_text(GsWebView *self, const char *text)
+{
+    g_return_if_fail(GS_IS_WEB_VIEW(self));
+    char *escaped = g_strescape(text, NULL);
+    char *js = g_strdup_printf(
+        "(function(){if(document.activeElement && document.activeElement.isContentEditable){"
+        "document.execCommand('insertText', false, \"%s\");} else if(document.activeElement && 'value' in document.activeElement){"
+        "var el=document.activeElement; var start=el.selectionStart||0; var end=el.selectionEnd||0; el.value=el.value.slice(0,start)+\"%s\"+el.value.slice(end); el.setSelectionRange(start+%d,start+%d);} })();",
+        escaped, escaped, (int)strlen(text), (int)strlen(text));
+    run_js(self, js);
+    g_free(js);
+    g_free(escaped);
+}
+
+void
+gs_web_view_backspace(GsWebView *self)
+{
+    g_return_if_fail(GS_IS_WEB_VIEW(self));
+    run_js(self,
+        "(function(){var e=new KeyboardEvent('keydown',{key:'Backspace',code:'Backspace',bubbles:true,cancelable:true});"
+        "document.activeElement.dispatchEvent(e);})();");
+}
+
+void
+gs_web_view_press_enter(GsWebView *self)
+{
+    g_return_if_fail(GS_IS_WEB_VIEW(self));
+    run_js(self,
+        "(function(){var e=new KeyboardEvent('keydown',{key:'Enter',code:'Enter',bubbles:true,cancelable:true});"
+        "document.activeElement.dispatchEvent(e);})();");
+}
+
+void
+gs_web_view_move_caret(GsWebView *self, int delta)
+{
+    g_return_if_fail(GS_IS_WEB_VIEW(self));
+    const char *key = delta < 0 ? "ArrowLeft" : "ArrowRight";
+    send_keyboard_event(self, key);
+}
+
+void
+gs_web_view_scroll(GsWebView *self, int dx, int dy)
+{
+    g_return_if_fail(GS_IS_WEB_VIEW(self));
+    char *js = g_strdup_printf("window.scrollBy(%d, %d);", dx, dy);
+    run_js(self, js);
+    g_free(js);
+}
+
+void
+gs_web_view_set_zoom_delta(GsWebView *self, double delta)
+{
+    g_return_if_fail(GS_IS_WEB_VIEW(self));
+    double level = webkit_web_view_get_zoom_level(WEBKIT_WEB_VIEW(self));
+    level += delta;
+    if (level < 0.25) level = 0.25;
+    if (level > 5.0) level = 5.0;
+    webkit_web_view_set_zoom_level(WEBKIT_WEB_VIEW(self), level);
+}
+
+void
+gs_web_view_toggle_video_controls(GsWebView *self)
+{
+    g_return_if_fail(GS_IS_WEB_VIEW(self));
+    run_js(self,
+        "(function(){var v=document.querySelector('video'); if(!v) return; v.controls=!v.controls;})();");
+}
+
+void
+gs_web_view_video_play_pause(GsWebView *self)
+{
+    g_return_if_fail(GS_IS_WEB_VIEW(self));
+    run_js(self,
+        "(function(){var v=document.querySelector('video'); if(!v) return; if(v.paused) v.play(); else v.pause();})();");
+}
+
+void
+gs_web_view_video_seek(GsWebView *self, int seconds)
+{
+    g_return_if_fail(GS_IS_WEB_VIEW(self));
+    char *js = g_strdup_printf(
+        "(function(){var v=document.querySelector('video'); if(!v) return; v.currentTime = Math.max(0, v.currentTime + %d);})();",
+        seconds);
+    run_js(self, js);
+    g_free(js);
+}
+
+void
+gs_web_view_video_volume(GsWebView *self, float delta)
+{
+    g_return_if_fail(GS_IS_WEB_VIEW(self));
+    char *js = g_strdup_printf(
+        "(function(){var v=document.querySelector('video'); if(!v) return; v.volume = Math.min(1.0, Math.max(0.0, v.volume + %f));})();",
+        delta);
+    run_js(self, js);
+    g_free(js);
 }
