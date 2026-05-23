@@ -50,6 +50,19 @@ window,
   outline: none;
 }
 
+.gs-progress-bar {
+    min-height: 3px;
+    background: transparent;
+}
+.gs-progress-bar trough {
+    background: rgba(255,255,255,0.1);
+    min-height: 3px;
+}
+.gs-progress-bar progress {
+    background: #0078d4;
+    min-height: 3px;
+}
+
 /* ================================================================== */
 /*  Nav buttons (back/forward/reload)                                   */
 /* ================================================================== */

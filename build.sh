@@ -1,319 +1,205 @@
 #!/bin/bash
-# GameSurf - Build and deploy script for ArkOS/Rocknix
-# This script sets up the complete build environment and creates the ArkOS distribution
+set -euo pipefail
 
-set -e
+# ============================================================
+# GameSurf Master Build Script
+# Builds x86_64, arm64, and armhf into dist/{arch}/
+# Cross-configs are read from config/ directory
+# ============================================================
 
-PROJECT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-BUILD_DIR="${PROJECT_DIR}/build"
-DIST_DIR="${PROJECT_DIR}/dist"
-ARKOS_DIR="${DIST_DIR}/GameSurf"
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+PROJECT_DIR="$SCRIPT_DIR"
+BUILD_DIR="$PROJECT_DIR/build"
+DIST_DIR="$PROJECT_DIR/dist"
+CONFIG_DIR="$PROJECT_DIR/config"
 
-# Colors for output
+# Colors
 RED='\033[0;31m'
 GREEN='\033[0;32m'
 YELLOW='\033[1;33m'
-NC='\033[0m' # No Color
+BLUE='\033[0;34m'
+NC='\033[0m'
 
-print_header() {
-    echo -e "${GREEN}========================================${NC}"
-    echo -e "${GREEN}$1${NC}"
-    echo -e "${GREEN}========================================${NC}"
-}
+log_info()  { echo -e "${GREEN}[INFO]${NC} $1"; }
+log_warn()  { echo -e "${YELLOW}[WARN]${NC} $1"; }
+log_error() { echo -e "${RED}[ERROR]${NC} $1"; }
+log_step()  { echo -e "${BLUE}[STEP]${NC} $1"; }
 
-print_info() {
-    echo -e "${YELLOW}[*]${NC} $1"
-}
-
-print_success() {
-    echo -e "${GREEN}[✓]${NC} $1"
-}
-
-print_error() {
-    echo -e "${RED}[✗]${NC} $1"
-}
-
-# Step 1: Check dependencies
-print_header "Checking Dependencies"
-DEPS_OK=true
-
-check_cmd() {
-    if ! command -v $1 &> /dev/null; then
-        print_error "$1 not found"
-        DEPS_OK=false
-    else
-        print_success "$1 found"
+# Check dependencies
+check_deps() {
+    local missing=()
+    for cmd in meson ninja pkg-config glib-compile-schemas; do
+        if ! command -v "$cmd" &>/dev/null; then
+            missing+=("$cmd")
+        fi
+    done
+    if [ ${#missing[@]} -ne 0 ]; then
+        log_error "Missing dependencies: ${missing[*]}"
+        echo "Install: sudo apt install meson ninja-build pkg-config libglib2.0-dev-bin"
+        exit 1
     fi
 }
 
-check_pkg() {
-    if ! pkg-config --exists $1 2>/dev/null; then
-        print_error "$1 not found"
-        DEPS_OK=false
-    else
-        print_success "$1 found"
+# Build for a specific architecture
+build_arch() {
+    local arch=$1
+    local cross_file=$2
+    local build_subdir="$BUILD_DIR/$arch"
+    local dist_arch="$DIST_DIR/$arch"
+
+    log_step "Building for $arch..."
+
+    rm -rf "$build_subdir"
+    mkdir -p "$build_subdir"
+
+    local setup_args=(
+        --buildtype=release
+        --prefix=/usr/local
+        -Dstrip=true
+    )
+    if [ -n "$cross_file" ] && [ -f "$cross_file" ]; then
+        setup_args+=("--cross-file=$cross_file")
+        log_info "Using cross-file: $cross_file"
     fi
-}
 
-check_cmd meson
-check_cmd ninja
-check_cmd gcc
-check_pkg gtk4
-check_pkg webkitgtk-6.0
-check_pkg sdl2
+    meson setup "$build_subdir" "$PROJECT_DIR" "${setup_args[@]}"
+    ninja -C "$build_subdir"
 
-if [ "$DEPS_OK" = false ]; then
-    print_error "Some dependencies are missing. Please install them and try again."
-    exit 1
-fi
+    # Create dist structure
+    mkdir -p "$dist_arch/bin"
+    mkdir -p "$dist_arch/data"
+    mkdir -p "$dist_arch/lib"
 
-# Step 2: Clean build directory
-print_header "Cleaning Previous Build"
-if [ -d "$BUILD_DIR" ]; then
-    rm -rf "$BUILD_DIR"
-    print_success "Cleaned $BUILD_DIR"
-fi
+    cp "$build_subdir/gamesurf" "$dist_arch/bin/"
+    cp "$PROJECT_DIR/data/style.css" "$dist_arch/data/"
+    cp "$PROJECT_DIR/data/gamesurf.desktop" "$dist_arch/data/"
+    cp "$PROJECT_DIR/data/gamesurf.gschema.xml" "$dist_arch/data/"
 
-# Step 3: Configure Meson
-print_header "Configuring Meson Build"
-cd "$PROJECT_DIR"
-meson setup "$BUILD_DIR" \
-    --prefix=/usr/local \
-    --wipe
+    if command -v glib-compile-schemas &>/dev/null; then
+        glib-compile-schemas "$dist_arch/data/"
+    fi
 
-print_success "Meson configured"
-
-# Step 4: Build
-print_header "Building GameSurf"
-ninja -C "$BUILD_DIR" -j$(nproc)
-print_success "Build completed"
-
-# Step 5: Create ArkOS distribution structure
-print_header "Creating ArkOS Distribution Structure"
-rm -rf "$DIST_DIR"
-mkdir -p "$ARKOS_DIR/bin"
-mkdir -p "$ARKOS_DIR/cache"
-mkdir -p "$ARKOS_DIR/data"
-
-# Copy binary
-cp "$BUILD_DIR/gamesurf" "$ARKOS_DIR/bin/"
-chmod +x "$ARKOS_DIR/bin/gamesurf"
-print_success "Binary copied"
-
-# Copy data files
-cp "data/gamesurf.gschema.xml" "$ARKOS_DIR/data/"
-cp "data/style.css" "$ARKOS_DIR/data/"
-cp "data/gamesurf.desktop" "$ARKOS_DIR/data/"
-print_success "Data files copied"
-
-# Create launcher script
-cat > "$ARKOS_DIR/gamesurf.sh" << 'EOF'
+    # Universal launcher
+    cat > "$dist_arch/GameSurf.sh" << 'LAUNCHER_EOF'
 #!/bin/bash
-# GameSurf launcher for ArkOS/Rocknix
-# This script sets up the environment and launches GameSurf
+set -e
+SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
+export GSETTINGS_SCHEMA_DIR="$SCRIPT_DIR/data"
+export GAMESURF_DATA_DIR="$SCRIPT_DIR/data"
+export SDL_GAMECONTROLLER_ALLOW_STEAM_VIRTUAL_GAMEPAD=1
+exec "$SCRIPT_DIR/bin/gamesurf" "$@"
+LAUNCHER_EOF
+    chmod +x "$dist_arch/GameSurf.sh"
 
-SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-GAMESURF_HOME="${SCRIPT_DIR}"
-GAMESURF_DATA="${GAMESURF_HOME}/data"
-GAMESURF_CACHE="${GAMESURF_HOME}/cache"
-GAMESURF_BIN="${GAMESURF_HOME}/bin/gamesurf"
-
-# Create necessary directories
-mkdir -p "$GAMESURF_CACHE"
-
-# Setup environment
-export HOME="$GAMESURF_HOME"
-export XDG_DATA_HOME="$GAMESURF_HOME/data"
-export XDG_CACHE_HOME="$GAMESURF_CACHE"
-export XDG_CONFIG_HOME="$GAMESURF_HOME/.config"
-export GSETTINGS_SCHEMA_DIR="$GAMESURF_DATA"
+    # PortMaster / ArkOS launcher
+    cat > "$dist_arch/launch.sh" << 'PORTMASTER_EOF'
+#!/bin/bash
+# PortMaster / ArkOS / Rocknix launcher
+export SDL_GAMECONTROLLER_ALLOW_STEAM_VIRTUAL_GAMEPAD=1
+export GAMESURF_DATA_DIR="$(dirname "$0")/data"
+export GSETTINGS_SCHEMA_DIR="$(dirname "$0")/data"
 export SDL_JOYSTICK_HIDAPI=1
-export SDL_GAMECONTROLLER_ALLOW_STEAM_NEUTRAL_OUTPUT=1
+export SDL_HINT_JOYSTICK_HIDAPI_BLUETOOTH=1
+exec "$(dirname "$0")/bin/gamesurf" "$@"
+PORTMASTER_EOF
+    chmod +x "$dist_arch/launch.sh"
 
-# Re-compile schemas if needed
-if [ ! -f "$GAMESURF_DATA/gschemas.compiled" ] || \
-   [ "$GAMESURF_DATA/gamesurf.gschema.xml" -nt "$GAMESURF_DATA/gschemas.compiled" ]; then
-    glib-compile-schemas "$GAMESURF_DATA" 2>/dev/null || true
-fi
+    log_info "$arch build complete → $dist_arch/"
+}
 
-# Launch GameSurf
-exec "$GAMESURF_BIN" "$@"
+# Create tar.xz packages
+create_packages() {
+    log_step "Creating distribution packages..."
+    mkdir -p "$DIST_DIR/packages"
+
+    local version
+    version="$(grep "version:" "$PROJECT_DIR/meson.build" | head -1 | sed "s/.*version: *'//;s/'.*//")"
+    [ -z "$version" ] && version="0.3.0"
+
+    for arch in x86_64 arm64 armhf; do
+        local src="$DIST_DIR/$arch"
+        if [ -d "$src" ]; then
+            local pkg="$DIST_DIR/packages/gamesurf-${version}-${arch}.tar.xz"
+            tar -cJf "$pkg" -C "$DIST_DIR" "$arch"
+            log_info "Package: $pkg"
+        fi
+    done
+}
+
+# Print usage
+usage() {
+    cat << EOF
+Usage: $0 [OPTIONS] [ARCH...]
+
+Build GameSurf for specified architectures.
+
+Architectures:
+  x86_64    Desktop Linux (default)
+  arm64     ARM64 / AArch64 (RG552, RG505, etc.)
+  armhf     ARM 32-bit hard-float (RG351MP, RG351V, RG353V, etc.)
+
+Options:
+  -a, --all       Build all architectures
+  -p, --package   Create tar.xz packages after build
+  -c, --clean     Clean build directories first
+  -h, --help      Show this help
+
+Examples:
+  $0              Build x86_64 only
+  $0 arm64        Build for ARM64
+  $0 -a           Build all architectures
+  $0 -a -p        Build all and create packages
+
+Cross-compiler install:
+  ARM64:  sudo apt install gcc-aarch64-linux-gnu g++-aarch64-linux-gnu
+  ARMHF:  sudo apt install gcc-arm-linux-gnueabihf g++-arm-linux-gnueabihf
 EOF
-chmod +x "$ARKOS_DIR/gamesurf.sh"
-print_success "Launcher script created"
+}
 
-# Create main launcher for /roms/tools/
-cat > "$DIST_DIR/GameSurf.sh" << 'EOF'
-#!/bin/bash
-# GameSurf main launcher for ArkOS/Rocknix
-# Place this in /roms/tools/GameSurf.sh
+main() {
+    local arches=()
+    local do_package=false
+    local do_clean=false
 
-SCRIPT_DIR="$(dirname "$(readlink -f "${BASH_SOURCE[0]}")")"
-GAMESURF_DIR="${SCRIPT_DIR}/GameSurf"
+    while [ $# -gt 0 ]; do
+        case $1 in
+            -a|--all)      arches=(x86_64 arm64 armhf); shift ;;
+            -p|--package)   do_package=true; shift ;;
+            -c|--clean)     do_clean=true; shift ;;
+            -h|--help)      usage; exit 0 ;;
+            x86_64|amd64)   arches+=("x86_64"); shift ;;
+            arm64|aarch64)  arches+=("arm64"); shift ;;
+            armhf|armv7)    arches+=("armhf"); shift ;;
+            *)              log_error "Unknown option: $1"; usage; exit 1 ;;
+        esac
+    done
 
-if [ ! -d "$GAMESURF_DIR" ]; then
-    echo "Error: GameSurf directory not found at $GAMESURF_DIR"
-    exit 1
-fi
+    [ ${#arches[@]} -eq 0 ] && arches=("x86_64")
 
-# Kill any existing instances
-pkill -f "gamesurf" 2>/dev/null || true
-sleep 1
+    check_deps
 
-# Launch GameSurf
-"$GAMESURF_DIR/gamesurf.sh" "$@"
-EOF
-chmod +x "$DIST_DIR/GameSurf.sh"
-print_success "Main launcher created"
+    if [ "$do_clean" = true ]; then
+        log_step "Cleaning..."
+        rm -rf "$BUILD_DIR" "$DIST_DIR"
+    fi
 
-# Create installation guide
-cat > "$DIST_DIR/README_INSTALLATION.md" << 'EOF'
-# GameSurf Installation Guide for ArkOS/Rocknix
+    mkdir -p "$DIST_DIR"
 
-## Installation
+    for arch in "${arches[@]}"; do
+        case $arch in
+            x86_64) build_arch "x86_64" "" ;;
+            arm64)  build_arch "arm64" "$CONFIG_DIR/cross-arm64.txt" ;;
+            armhf)  build_arch "armhf" "$CONFIG_DIR/cross-armhf.txt" ;;
+        esac
+    done
 
-1. **Extract the distribution:**
-   ```bash
-   tar xzf gamesurf-dist.tar.gz
-   ```
+    if [ "$do_package" = true ]; then
+        create_packages
+    fi
 
-2. **Copy to ArkOS:**
-   ```bash
-   # Copy the GameSurf directory to /roms/tools/
-   cp -r GameSurf /roms/tools/
-   
-   # Copy the launcher script
-   cp GameSurf.sh /roms/tools/
-   chmod +x /roms/tools/GameSurf.sh
-   ```
+    log_info "Done!"
+    echo ""
+    find "$DIST_DIR" -maxdepth 2 -type d | sort | sed 's/^/  /'
+}
 
-3. **Verify installation:**
-   ```bash
-   ls -la /roms/tools/GameSurf/
-   ls -la /roms/tools/GameSurf.sh
-   ```
-
-4. **PortMaster integration (optional):**
-   If using PortMaster, create a metadata file:
-   ```bash
-   mkdir -p /roms/ports/GameSurf
-   cp GameSurf/data/gamesurf.desktop /roms/ports/GameSurf/metadata.json
-   ```
-
-## Launch
-
-- **From ArkOS menu:** Navigate to Tools and select "GameSurf.sh"
-- **From command line:** `/roms/tools/GameSurf.sh`
-- **With custom URL:** `/roms/tools/GameSurf.sh https://example.com`
-
-## Configuration
-
-Settings are stored in `~/.local/share/gamesurf/` (inside the GameSurf directory)
-
-### Keyboard Layouts
-Supported: English (en), Russian (ru), German (de), French (fr)
-
-### Gamepad Controls
-- **A button:** Click / Activate
-- **B button:** Back / Cancel
-- **X button:** Toggle cursor/focus mode
-- **Y button:** Reload page
-- **L shoulder:** Previous page
-- **R shoulder:** Next page
-- **Start:** Open menu
-- **Select:** Toggle keyboard
-- **D-Pad:** Navigate
-- **Left stick:** Cursor movement or scroll
-- **Right stick:** (reserved for future)
-
-## Troubleshooting
-
-### Gamepad not detected
-1. Verify gamepad connection: `ls -l /dev/input/js*`
-2. Test with SDL: `sdl2-jstest`
-3. Check Bluetooth: `bluetoothctl devices`
-
-### No sound
-Check ALSA: `aplay -l` or `pactl list short sinks`
-
-### Settings not saving
-Ensure cache directory is writable: `chmod -R 777 GameSurf/cache/`
-
-## Building from source
-
-See BUILD.md in the GameSurf repository
-
-## License
-
-GameSurf is licensed under GPL-3.0
-EOF
-
-print_success "Installation guide created"
-
-# Create build info file
-cat > "$DIST_DIR/BUILD_INFO.txt" << EOF
-GameSurf Distribution Build Information
-=======================================
-
-Build Date: $(date)
-Build System: $(uname -s) $(uname -m)
-Target: ArkOS / Rocknix / Similar systems
-
-Compiler: $(gcc --version | head -1)
-Meson Version: $(meson --version)
-Ninja Version: $(ninja --version)
-
-Dependencies:
-- GTK 4.6+
-- WebKit GTK 6.0+
-- SDL2
-- GLib 2.56+
-
-Build Directory: $BUILD_DIR
-Distribution Directory: $DIST_DIR
-
-Files included:
-- GameSurf/bin/gamesurf (binary)
-- GameSurf/data/gamesurf.gschema.xml (GSettings schema)
-- GameSurf/data/style.css (Theme)
-- GameSurf/gamesurf.sh (Launcher script)
-- GameSurf.sh (Main entry point)
-- README_INSTALLATION.md (This file)
-EOF
-
-print_success "Build information recorded"
-
-# Create package
-print_header "Creating Distribution Package"
-cd "$DIST_DIR/.."
-tar czf "gamesurf-dist-$(date +%Y%m%d).tar.gz" \
-    --exclude='*.o' \
-    --exclude='*.a' \
-    --exclude='.git' \
-    "GameSurf" \
-    "GameSurf.sh" \
-    "BUILD_INFO.txt" \
-    "README_INSTALLATION.md"
-
-DIST_FILE="gamesurf-dist-$(date +%Y%m%d).tar.gz"
-print_success "Distribution package created: $DIST_FILE"
-
-# Create checksum
-cd "$DIST_DIR/.."
-sha256sum "$DIST_FILE" > "${DIST_FILE}.sha256"
-print_success "Checksum created: ${DIST_FILE}.sha256"
-
-# Final summary
-print_header "Build Complete!"
-echo -e "${GREEN}Distribution ready at:${NC}"
-echo "  $(pwd)/$DIST_FILE"
-echo ""
-echo -e "${GREEN}Installation instructions:${NC}"
-echo "  1. Extract: tar xzf $DIST_FILE"
-echo "  2. Copy GameSurf to /roms/tools/"
-echo "  3. Copy GameSurf.sh to /roms/tools/"
-echo "  4. Run: /roms/tools/GameSurf.sh"
-echo ""
-echo -e "${GREEN}For detailed instructions, see: README_INSTALLATION.md${NC}"
-
-print_success "All done!"
+main "$@"

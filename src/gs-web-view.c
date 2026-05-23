@@ -196,27 +196,33 @@ send_keyboard_event(GsWebView *self, const char *key)
     g_free(js);
 }
 
-void
-gs_web_view_gamepad_navigate(GsWebView *self, int dx, int dy)
-{
-    g_return_if_fail(GS_IS_WEB_VIEW(self));
-    const char *key = NULL;
-    if (dx < 0) key = "ArrowLeft";
-    else if (dx > 0) key = "ArrowRight";
-    else if (dy < 0) key = "ArrowUp";
-    else if (dy > 0) key = "ArrowDown";
-    if (!key) return;
-    send_keyboard_event(self, key);
+void gs_web_view_gamepad_navigate(GsWebView *self, int dx, int dy) {
+    WebKitWebView *wv = WEBKIT_WEB_VIEW(self);
+    const char *script = NULL;
+    
+    if (dx > 0) script = "window.gamepadNav && window.gamepadNav.moveRight();";
+    else if (dx < 0) script = "window.gamepadNav && window.gamepadNav.moveLeft();";
+    else if (dy > 0) script = "window.gamepadNav && window.gamepadNav.moveDown();";
+    else if (dy < 0) script = "window.gamepadNav && window.gamepadNav.moveUp();";
+    
+    if (script) {
+        webkit_web_view_evaluate_javascript(wv, script, -1, NULL, NULL, NULL, NULL, NULL);
+    }
 }
 
-void
-gs_web_view_gamepad_activate(GsWebView *self)
-{
-    g_return_if_fail(GS_IS_WEB_VIEW(self));
-    run_js(self,
-        "(function(){var el=document.activeElement; if(el && typeof el.click==='function') el.click();})();");
+void gs_web_view_gamepad_activate(GsWebView *self) {
+    const char *script = 
+        "(function() {"
+        "  const el = document.activeElement;"
+        "  if (el && (el.tagName === 'A' || el.tagName === 'BUTTON' || el.onclick)) {"
+        "    el.click(); return true;"
+        "  }"
+        "  const focused = document.querySelector(':focus');"
+        "  if (focused) { focused.click(); return true; }"
+        "  return false;"
+        "})()";
+    webkit_web_view_evaluate_javascript(WEBKIT_WEB_VIEW(self), script, -1, NULL, NULL, NULL, NULL, NULL);
 }
-
 void
 gs_web_view_insert_text(GsWebView *self, const char *text)
 {

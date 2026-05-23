@@ -7,7 +7,7 @@
 
 struct _GsApplication {
     GtkApplication parent_instance;
-    GSettings *settings;
+    GsSettings *settings;
 };
 
 G_DEFINE_TYPE(GsApplication, gs_application, GTK_TYPE_APPLICATION)

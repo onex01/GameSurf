@@ -1,0 +1,172 @@
+/* ================================================================== */
+/* Progress bar (was missing from UI!)                                */
+/* ================================================================== */
+.gs-progress-bar {
+    min-height: 3px;
+    background: transparent;
+}
+.gs-progress-bar trough {
+    background: rgba(255,255,255,0.08);
+    min-height: 3px;
+}
+.gs-progress-bar progress {
+    background: linear-gradient(90deg, #0078d4, #00b4ff);
+    min-height: 3px;
+    border-radius: 0 2px 2px 0;
+    transition: background 200ms ease;
+}
+
+/* ================================================================== */
+/* Main Menu (Xbox/PS/Switch style overlay)                           */
+/* ================================================================== */
+.gs-main-menu {
+    background: rgba(10, 14, 20, 0.96);
+    border-radius: 16px;
+    border: 1px solid rgba(255,255,255,0.06);
+    box-shadow: 0 24px 64px rgba(0,0,0,0.7);
+}
+
+.gs-menu-box {
+    padding: 0;
+}
+
+.gs-menu-title {
+    font-size: 22px;
+    font-weight: 700;
+    color: #ffffff;
+    padding: 20px 28px 8px;
+    letter-spacing: -0.02em;
+}
+
+.gs-menu-focus-bar {
+    background: linear-gradient(180deg, #0078d4, #00b4ff);
+    border-radius: 0 3px 3px 0;
+    min-width: 4px;
+    transition: margin-top 120ms cubic-bezier(0.4, 0, 0.2, 1);
+}
+
+.gs-menu-row {
+    padding: 0 20px;
+    min-height: 56px;
+}
+
+.gs-menu-item {
+    background: transparent;
+    border: none;
+    border-radius: 0;
+    padding: 0;
+    margin: 0;
+    transition: background 150ms ease;
+}
+
+.gs-menu-item:hover {
+    background: rgba(255,255,255,0.04);
+}
+
+.gs-menu-item.menu-focused {
+    background: rgba(0, 120, 212, 0.15);
+}
+
+.gs-menu-item.menu-focused-anim {
+    animation: menu-focus-pulse 2s ease-in-out infinite;
+}
+
+@keyframes menu-focus-pulse {
+    0%, 100% { background: rgba(0, 120, 212, 0.12); }
+    50% { background: rgba(0, 120, 212, 0.22); }
+}
+
+.gs-menu-icon {
+    color: #9ca3af;
+    transition: color 150ms;
+}
+
+.gs-menu-item.menu-focused .gs-menu-icon {
+    color: #00b4ff;
+}
+
+.gs-menu-label {
+    font-size: 15px;
+    font-weight: 500;
+    color: #d1d5db;
+}
+
+.gs-menu-item.menu-focused .gs-menu-label {
+    color: #ffffff;
+}
+
+.gs-menu-counter {
+    font-size: 13px;
+    font-weight: 600;
+    color: #6b7280;
+    background: rgba(255,255,255,0.06);
+    border-radius: 10px;
+    padding: 2px 10px;
+    min-width: 28px;
+    text-align: center;
+}
+
+.gs-menu-item.menu-focused .gs-menu-counter {
+    color: #00b4ff;
+    background: rgba(0, 120, 212, 0.2);
+}
+
+.gs-menu-item.menu-item-exit .gs-menu-label {
+    color: #f87171;
+}
+
+.gs-menu-item.menu-item-exit.menu-focused .gs-menu-label {
+    color: #fca5a5;
+}
+
+.gs-menu-hint {
+    font-size: 12px;
+    color: #6b7280;
+    padding: 12px 28px 20px;
+    text-align: center;
+}
+
+/* ================================================================== */
+/* Settings panel improvements                                        */
+/* ================================================================== */
+.settings-panel {
+    background: rgba(13, 17, 23, 0.98);
+    padding: 24px;
+}
+
+.settings-title {
+    font-size: 20px;
+    font-weight: 700;
+    color: #ffffff;
+    margin-bottom: 16px;
+}
+
+.settings-section {
+    font-size: 11px;
+    font-weight: 600;
+    text-transform: uppercase;
+    letter-spacing: 0.1em;
+    color: #6b7280;
+    margin-top: 20px;
+    margin-bottom: 8px;
+}
+
+.settings-group {
+    background: rgba(255,255,255,0.03);
+    border-radius: 12px;
+    border: 1px solid rgba(255,255,255,0.06);
+    padding: 8px 0;
+}
+
+.settings-focused {
+    outline: 2px solid #0078d4;
+    outline-offset: -2px;
+    background: rgba(0, 120, 212, 0.1);
+}
+
+.settings-hint {
+    font-size: 12px;
+    color: #6b7280;
+    margin-top: 4px;
+    margin-bottom: 12px;
+}
