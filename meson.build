@@ -1,11 +1,11 @@
 project('gamesurf', 'c',
-    version: '0.3.0',
-    license: 'GPL-3.0',
-    default_options: [
-        'warning_level=2',
-        'c_std=gnu11',
-        'buildtype=release',
-    ],
+  version: '0.3.0',
+  license: 'GPL-3.0',
+  default_options: [
+    'warning_level=2',
+    'c_std=gnu11',
+    'buildtype=release',
+  ],
 )
 
 cc = meson.get_compiler('c')
@@ -21,31 +21,6 @@ gsound_dep = dependency('gsound', required: false)
 soup_dep = dependency('libsoup-3.0')
 json_dep = dependency('json-glib-1.0')
 
-# Strip x86-only SSE flags from SDL2 for cross-compilation
-sdl2_cflags = sdl2_dep.partial_dependency(compile_args: true).get_compile_args()
-sdl2_ldflags = sdl2_dep.partial_dependency(link_args: true).get_link_args()
-
-filtered_cflags = []
-foreach f : sdl2_cflags
-    if f != '-mfpmath=sse' and f != '-msse' and f != '-msse2'
-        filtered_cflags += f
-    endif
-endforeach
-
-filtered_ldflags = []
-foreach f : sdl2_ldflags
-    if f != '-mfpmath=sse' and f != '-msse' and f != '-msse2'
-        filtered_ldflags += f
-    endif
-endforeach
-
-# Rebuild SDL2 dependency without SSE flags
-sdl2_filtered = declare_dependency(
-    compile_args: filtered_cflags,
-    link_args: filtered_ldflags,
-    dependencies: sdl2_dep.partial_dependency(compile_args: false, link_args: false),
-)
-
 # Configuration
 config_data = configuration_data()
 config_data.set_quoted('VERSION', meson.project_version())
@@ -54,45 +29,45 @@ config_data.set_quoted('GETTEXT_PACKAGE', 'gamesurf')
 config_data.set_quoted('LOCALEDIR', get_option('prefix') / get_option('localedir'))
 
 if xtst_dep.found() and x11_dep.found()
-    config_data.set('HAVE_X11', 1)
+  config_data.set('HAVE_X11', 1)
 elif libinput_dep.found()
-    config_data.set('HAVE_WAYLAND', 1)
+  config_data.set('HAVE_WAYLAND', 1)
 endif
 
 configure_file(
-    output: 'config.h',
-    configuration: config_data,
+  output: 'config.h',
+  configuration: config_data,
 )
 
 inc = include_directories('src', '.')
 
 sources = files(
-    'src/main.c',
-    'src/gs-application.c',
-    'src/gs-window.c',
-    'src/gs-web-view.c',
-    'src/gs-gamepad-manager.c',
-    'src/gs-homescreen.c',
-    'src/gs-cursor-controller.c',
-    'src/gs-virtual-keyboard-v2.c',
-    'src/gs-video-controller.c',
-    'src/gs-settings.c',
-    'src/gs-utils.c',
-    'src/gs-cache-manager.c',
-    'src/gs-tab-manager.c',
-    'src/gs-gamepad-input.c',
-    'src/gs-main-menu.c',
+  'src/main.c',
+  'src/gs-application.c',
+  'src/gs-window.c',
+  'src/gs-web-view.c',
+  'src/gs-gamepad-manager.c',
+  'src/gs-homescreen.c',
+  'src/gs-cursor-controller.c',
+  'src/gs-virtual-keyboard-v2.c',
+  'src/gs-video-controller.c',
+  'src/gs-settings.c',
+  'src/gs-utils.c',
+  'src/gs-cache-manager.c',
+  'src/gs-tab-manager.c',
+  'src/gs-gamepad-input.c',
+  'src/gs-main-menu.c',
 )
 
 executable('gamesurf',
-    sources,
-    include_directories: inc,
-    dependencies: [
-        gtk_dep, webkit_dep, sdl2_filtered, xtst_dep, x11_dep,
-        libinput_dep, gsound_dep, soup_dep, json_dep,
-        cc.find_library('m', required: true),
-    ],
-    install: true,
+  sources,
+  include_directories: inc,
+  dependencies: [
+    gtk_dep, webkit_dep, sdl2_dep, xtst_dep, x11_dep,
+    libinput_dep, gsound_dep, soup_dep, json_dep,
+    cc.find_library('m', required: true),
+  ],
+  install: true,
 )
 
 # Data
